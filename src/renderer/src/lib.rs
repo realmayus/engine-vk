@@ -1,207 +1,288 @@
-use std::sync::Arc;
-
-use egui_winit_vulkano::Gui;
+use anyhow::Result;
+use std::path::Path;
+use std::time::Instant;
 use glam::Vec2;
-use vulkano::buffer::Subbuffer;
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
-use vulkano::device::{Device, DeviceExtensions, Queue, QueueFlags};
-use vulkano::format::Format;
-use vulkano::image::Image;
-use vulkano::image::sampler::Sampler;
-use vulkano::image::view::ImageView;
-use vulkano::instance::Instance;
-use vulkano::memory::allocator::StandardMemoryAllocator;
-use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::swapchain::{Surface, Swapchain};
-use winit::event_loop::EventLoop;
-use winit::window::Window;
-
-use lib::shader_types::{CameraUniform, LightInfo, MaterialInfo, MeshInfo};
+use wgpu::{Color, Device, Limits, Queue, RenderPassDescriptor, Surface, SurfaceConfiguration, SurfaceError};
+use winit::event::{ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::{Window, WindowBuilder};
+use lib::managers::{MaterialManager, TextureManager};
 
 use crate::camera::{Camera, KeyState};
-use crate::pipelines::{PipelineProvider, PipelineProviderKind};
+use crate::pipelines::pbr_pipeline::PBRPipelineProvider;
+use lib::scene::{World};
+use lib::texture::Texture;
+use systems::io::gltf_loader::load_gltf;
+use crate::gui::EguiContext;
 
 pub mod camera;
-pub mod initialization;
 pub mod pipelines;
-pub mod render_loop;
+mod gui;
 
-pub trait StateCallable {
-    fn setup_gui(&mut self, gui: &mut Gui);
-    fn update(
-        &mut self,
-        pipeline_providers: &mut [PipelineProviderKind],
-        allocator: Arc<StandardMemoryAllocator>,
-        descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
-        cmd_buf_allocator: Arc<StandardCommandBufferAllocator>,
-        queue_family_index: u32,
-        device: Arc<Device>,
-        viewport: Viewport,
-    ) -> Option<Arc<PrimaryAutoCommandBuffer>>;
-    fn cleanup(&self);
+pub trait Hook {
+    fn setup<'a>(&self, world: &'a mut World, data: SetupData);
 
-    fn get_buffers(
-        &self,
-        device: Arc<Device>,
-    ) -> (
-        Subbuffer<CameraUniform>,
-        Vec<(Arc<ImageView>, Arc<Sampler>)>,
-        Vec<Subbuffer<MaterialInfo>>,
-        Vec<Subbuffer<MeshInfo>>,
-        Vec<Subbuffer<LightInfo>>,
-    );
-
-    fn recv_input(
-        &mut self,
-        keys: &KeyState,
-        change: Vec2,
-        delta_time: f32,
-    );
+    fn update(&mut self, keys: &KeyState, delta_time: f32);
 }
 
-pub struct RenderInitState {
-    pub device: Arc<Device>,
-    surface: Arc<Surface>,
-    event_loop: EventLoop<()>,
-    pub window: Arc<Window>,
-    pub memory_allocator: Arc<StandardMemoryAllocator>,
-    pub queue: Arc<Queue>,
-    pub swapchain: Arc<Swapchain>,
-    pub images: Vec<Arc<Image>>,
-    pub cmd_buf_allocator: Arc<StandardCommandBufferAllocator>,
-    pub descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
-    pub render_pass: Arc<RenderPass>,
-    pub image_format: Format,
+pub struct SetupData<'a> {
+    pub tex_bind_group_layout: &'a wgpu::BindGroupLayout,
+    pub device: &'a Device,
+    pub queue: &'a Queue,
 }
 
-fn select_physical_device(
-    instance: &Arc<Instance>,
-    surface: &Arc<Surface>,
-    device_extensions: &DeviceExtensions,
-) -> (Arc<PhysicalDevice>, u32) {
-    instance
-        .enumerate_physical_devices()
-        .expect("failed to enumerate physical devices")
-        .filter(|p| p.supported_extensions().contains(device_extensions))
-        .filter_map(|p| {
-            p.queue_family_properties()
-                .iter()
-                .enumerate()
-                .position(|(i, q)| {
-                    q.queue_flags.contains(QueueFlags::GRAPHICS)
-                        && p.surface_support(i as u32, surface).unwrap_or(false)
-                })
-                .map(|q| (p, q as u32))
-        })
-        .min_by_key(|(p, _)| match p.properties().device_type {
-            PhysicalDeviceType::DiscreteGpu => 0,
-            PhysicalDeviceType::IntegratedGpu => 1,
-            PhysicalDeviceType::VirtualGpu => 2,
-            PhysicalDeviceType::Cpu => 3,
-            _ => 4,
-        })
-        .expect("no device available")
-}
-
-fn get_render_pass(device: Arc<Device>, swapchain: &Arc<Swapchain>) -> Arc<RenderPass> {
-    vulkano::single_pass_renderpass!(
-        device,
-        attachments: {
-            color: {
-                format: swapchain.image_format(), // set the format the same as the swapchain
-                samples: 1,
-                load_op: Clear,
-                store_op: Store,
-            },
-            depth: {
-                format: Format::D16_UNORM,
-                samples: 1,
-                load_op: Clear,
-                store_op: DontCare,
-            }
-        },
-        pass: {
-            color: [color],
-            depth_stencil: {depth},
-        },
-    )
-    .unwrap()
-}
-
-fn get_framebuffers(
-    images: &[Arc<Image>],
-    render_pass: &Arc<RenderPass>,
-    depth_buffer: Arc<ImageView>,
-) -> (Vec<Arc<Framebuffer>>, Vec<Arc<ImageView>>) {
-    images
-        .iter()
-        .map(|image| {
-            let view = ImageView::new_default(image.clone()).unwrap();
-            (
-                Framebuffer::new(
-                    render_pass.clone(),
-                    FramebufferCreateInfo {
-                        attachments: vec![view.clone(), depth_buffer.clone()],
-                        ..Default::default()
-                    },
-                )
-                .unwrap(),
-                view.clone(),
-            )
-        })
-        .unzip()
-}
-
-fn get_finalized_render_passes(
-    framebuffers: Vec<Arc<Framebuffer>>,
-    cmd_buf_allocator: &StandardCommandBufferAllocator,
-    queue_family_index: u32,
-    pipeline_providers: &mut [PipelineProviderKind],
-) -> Vec<Arc<PrimaryAutoCommandBuffer>> {
-    framebuffers
-        .iter()
-        .map(|framebuffer| {
-            let mut builder = AutoCommandBufferBuilder::primary(
-                cmd_buf_allocator,
-                queue_family_index,
-                CommandBufferUsage::MultipleSubmit, // don't forget to write the correct buffer usage
-            )
-            .unwrap();
-
-            builder
-                .begin_render_pass(
-                    RenderPassBeginInfo {
-                        clear_values: vec![Some([0.1, 0.1, 0.1, 1.0].into()), Some(1f32.into())],
-                        ..RenderPassBeginInfo::framebuffer(framebuffer.clone())
-                    },
-                    SubpassBeginInfo {
-                        contents: SubpassContents::Inline,
-                        ..Default::default()
-                    }
-                )
-                .unwrap();
-
-            for pipeline_provider in &mut *pipeline_providers {
-                pipeline_provider.render_pass(&mut builder);
-            }
-
-            builder.end_render_pass(SubpassEndInfo::default()).unwrap();
-
-            builder.build().unwrap()
-        })
-        .collect()
+impl SetupData<'_> {
+    pub fn load_default_scene(&self, world: &mut World) {
+        let mut scenes = load_gltf(
+            Path::new("assets/models/cube_light_tan.glb"),
+            // Path::new("assets/models/DamagedHelmetTangents.glb"),
+            // Path::new("assets/models/monkeyabuse.glb"),
+            self.device,
+            self.queue,
+            self.tex_bind_group_layout,
+            &mut world.textures,
+            &mut world.materials,
+        );
+        let first = scenes.remove(0);
+        world.scenes.push(first);
+    }
 }
 
 pub struct RenderState {
-    pub init_state: RenderInitState,
-    pub viewport: Viewport,
-    pub cmd_buf_builder: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    pub device: Device,
+    surface: Surface,
+    surface_config: SurfaceConfiguration,
+    size: winit::dpi::PhysicalSize<u32>,
+    pub window: Window,
+    queue: Queue,
+    pbr_pipeline: PBRPipelineProvider,
+    camera: Camera,
+    world: World,
+    hook: Box<dyn Hook>,
 }
 
-pub struct PartialRenderState<'a> {
-    pub camera: &'a mut Camera,
+impl RenderState {
+    async fn new(window: Window, hook: impl Hook + 'static) -> Self {
+        let size = window.inner_size();
+        assert_ne!(size.width, 0);
+        assert_ne!(size.height, 0);
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        // Safety: Surface needs to live as long as the window that created it. State owns window, so this is safe.
+        let surface = unsafe { instance.create_surface(&window) }.unwrap();
+        // adapter is handle to the graphics card (to get its name, backend etc.)
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+
+        let limits = Limits {
+            max_storage_buffers_per_shader_stage: 1_000,
+            max_bind_groups: 5,
+            ..Default::default()
+        };
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    features: wgpu::Features::BUFFER_BINDING_ARRAY
+                        | wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY
+                    | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
+                        | wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY,
+                    limits,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+        let surface_config = SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            present_mode: surface_caps.present_modes[0],
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&device, &surface_config);
+        let world = World {
+            scenes: vec![],
+            active_scene: 0,
+            materials: MaterialManager::new(&device, &queue),
+            textures: TextureManager::new(&device, &queue),
+        };
+
+        let camera = Camera::new_default(size.width as f32, size.height as f32, &device);
+        //TODO create buffers for materials and textures (where do we store them? what if a new model with new textures is loaded?)
+        let mut pipeline = PBRPipelineProvider::new(&device, &surface_config, &[], &[], &[], &camera.buffer);
+        pipeline.create_pipeline(&device);
+
+        Self {
+            window,
+            surface,
+            device,
+            queue,
+            surface_config,
+            size,
+            pbr_pipeline: pipeline,
+            camera,
+            world,
+            hook: Box::from(hook),
+        }
+    }
+
+    fn setup(&mut self) {
+        self.hook.setup(&mut self.world, SetupData {
+            tex_bind_group_layout: &self.pbr_pipeline.tex_bind_group_layout,
+            device: &self.device,
+            queue: &self.queue,
+        });
+        self.pbr_pipeline.update_mesh_bind_group(&self.device, &self.world.get_active_scene().mesh_buffer);
+        self.world.materials.update_dirty(&self.queue);
+        self.world.update_active_scene(&self.queue);  // updates lights and mesh info buffers
+        self.pbr_pipeline.update_mat_bind_group(&self.device, &self.world.materials);
+        self.camera.update_view(&self.queue);
+        self.pbr_pipeline.update_lights_bind_group(&self.device, &self.world.get_active_scene().light_buffer);
+        self.camera.update_light_count(self.world.get_active_scene().light_buffer.len());
+    }
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
+    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
+            self.size = new_size;
+            self.surface_config.width = new_size.width;
+            self.surface_config.height = new_size.height;
+            self.surface.configure(&self.device, &self.surface_config);
+        }
+    }
+
+    fn input(&mut self, event: &winit::event::WindowEvent) -> bool {
+        false
+    }
+
+    fn update(&mut self, keys: &KeyState, delta_time: f32, cursor_delta: Vec2) {
+        self.hook.update(keys, delta_time);
+        self.camera.recv_input(keys, cursor_delta, delta_time);
+        self.camera.update_view(&self.queue);
+        self.world.update_active_scene(&self.queue);  // updates lights and mesh info buffers
+    }
+    fn render(&mut self) -> Result<(), SurfaceError> {
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        {
+            self.pbr_pipeline.render_meshes(
+                &mut encoder,
+                &view,
+                &self.world.pbr_meshes().collect::<Vec<_>>(),
+                &self.world.materials,
+            );
+            // let mut bufs = self.egui_ctx.render(&view, &mut encoder, &self.window, Self::gui);
+            // buffers.append(&mut bufs);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+        Ok(())
+    }
+}
+
+pub async fn run(hook: impl Hook + 'static) {
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new().build(&event_loop).unwrap();
+
+    let mut state = RenderState::new(window, hook).await;
+    let mut keys = KeyState::default();
+    let mut cursor_pos = Vec2::default();
+    let mut cursor_delta = Vec2::default();
+    let mut delta_time = 0.0;
+    state.setup();
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } if window_id == state.window().id() => {
+                if !state.input(event) {
+                    match event {
+                        WindowEvent::CloseRequested
+                        | WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::Escape),
+                                    ..
+                                },
+                            ..
+                        } => *control_flow = ControlFlow::Exit,
+                        WindowEvent::KeyboardInput { input: KeyboardInput {
+                            state,
+                            virtual_keycode: Some(keycode),
+                            ..
+                        },  .. } => {
+                            keys.update_keys(*keycode, *state);
+                        }
+                        WindowEvent::ModifiersChanged(state) => keys.set_modifiers(state),
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
+                        }
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            state.resize(**new_inner_size);
+                        }
+                        WindowEvent::CursorMoved { position, .. } => {
+                            let new_pos = Vec2::new(position.x as f32 / state.surface_config.width as f32, position.y as f32 / state.surface_config.height as f32);
+                            cursor_delta = cursor_pos - new_pos;
+                            cursor_pos = new_pos;
+                        }
+                        WindowEvent::MouseInput { state, button, ..} => {
+                            keys.update_mouse(state, button);
+                        }
+
+                        _ => {}
+                    }
+                }
+            }
+            Event::MainEventsCleared => {
+                state.window().request_redraw();
+                state.update(&keys, delta_time, cursor_delta);
+                cursor_delta = Vec2::default();
+            }
+            Event::RedrawRequested(window_id) if window_id == state.window().id() => {
+                let time = Instant::now();
+                match state.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                    Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                    Err(e) => eprintln!("{:?}", e),
+                }
+                let elapsed = time.elapsed().as_micros() as f32;
+                delta_time = elapsed / 1_000_000.0;
+            }
+            _ => {}
+        }
+    });
 }
