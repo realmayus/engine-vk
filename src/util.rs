@@ -1,7 +1,6 @@
 use crate::resources::{AllocatedBuffer, Allocator, DescriptorAllocator};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec4};
 use std::error::Error;
 
 pub struct FrameData {
@@ -13,18 +12,6 @@ pub struct FrameData {
     pub deletion_queue: DeletionQueue,
     pub descriptor_allocator: DescriptorAllocator,
     pub stale_buffers: Vec<AllocatedBuffer>,
-}
-
-#[repr(C)]
-#[repr(align(16))]
-#[derive(Clone)]
-pub struct GpuSceneData {
-    pub view: [[f32; 4]; 4],
-    pub proj: [[f32; 4]; 4],
-    pub viewproj: [[f32; 4]; 4],
-    pub ambient_color: [f32; 4],
-    pub sun_dir: [f32; 4],
-    pub sun_color: [f32; 4],
 }
 
 #[derive(Default)]

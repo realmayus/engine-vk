@@ -12,7 +12,7 @@ use crate::resources::{
     update_set, AllocUsage, AllocatedBuffer, AllocatedImage, Allocator, DescriptorAllocator, DescriptorBufferWriteInfo,
     DescriptorImageWriteInfo, PoolSizeRatio, TextureManager, WrappedBuffer,
 };
-use crate::util::{device_discovery, DeletionQueue, DescriptorLayoutBuilder, GpuSceneData};
+use crate::util::{device_discovery, DeletionQueue, DescriptorLayoutBuilder};
 use ash::khr::swapchain;
 use ash::vk::{DescriptorSet, DescriptorSetLayout};
 use ash::{khr, vk, Device, Instance};
@@ -20,6 +20,7 @@ use glam::Vec3;
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::{debug, info};
+use pipeline::GpuSceneData;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::cell::RefCell;
 use std::error::Error;
@@ -34,6 +35,7 @@ use winit::{
 };
 
 use crate::pipeline::egui::EguiPipeline;
+use crate::pipeline::grid::GridPipeline;
 use crate::pipeline::mesh::MeshPipeline;
 use crate::scene::mesh::Mesh;
 
@@ -65,6 +67,7 @@ struct App {
     bindless_descriptor_pool: vk::DescriptorPool,
     mesh_pipeline: MeshPipeline,
     egui_pipeline: EguiPipeline,
+    grid_pipeline: GridPipeline,
     immediate_fence: vk::Fence,
     immediate_command_pool: vk::CommandPool,
     immediate_command_buffer: vk::CommandBuffer,
@@ -74,6 +77,8 @@ struct App {
     scene_data: WrappedBuffer<GpuSceneData>,
     texture_manager: TextureManager,
     camera: camera::Camera,
+    show_gui: bool,
+    show_grid: bool,
 }
 
 struct SubmitContext {
@@ -186,6 +191,7 @@ impl App {
         let (descriptor_allocator, draw_image_descriptor_set_layout, draw_image_descriptor_set, scene_data_layout) =
             Self::init_descriptors(&device, draw_image.view, &mut deletion_queue);
         let (bindless_descriptor_pool, bindless_descriptor_set, bindless_set_layout) = Self::init_bindless(&device);
+        let grid_pipeline = GridPipeline::new(&device, window_size, &mut deletion_queue);
         let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
         let mut scene_data_buffer = WrappedBuffer {
             buffer: AllocatedBuffer::new(
@@ -200,6 +206,7 @@ impl App {
                 view: Default::default(),
                 proj: Default::default(),
                 viewproj: Default::default(),
+                unproj: Default::default(),
                 ambient_color: Default::default(),
                 sun_dir: Default::default(),
                 sun_color: Default::default(),
@@ -272,6 +279,7 @@ impl App {
             bindless_descriptor_pool,
             mesh_pipeline,
             egui_pipeline,
+            grid_pipeline,
             immediate_command_pool,
             immediate_command_buffer,
             immediate_fence,
@@ -280,6 +288,8 @@ impl App {
             scene_data: scene_data_buffer,
             texture_manager,
             camera,
+            show_gui: true,
+            show_grid: true,
         })
     }
 
@@ -691,6 +701,7 @@ impl App {
         self.resize_swapchain(size);
         self.mesh_pipeline.resize(size);
         self.egui_pipeline.resize(size);
+        self.grid_pipeline.resize(size);
     }
     fn resize_swapchain(&mut self, size: (u32, u32)) {
         unsafe {
@@ -801,29 +812,39 @@ impl App {
                 self.texture_manager.descriptor_set(),
                 self.scene_data.buffer.device_address(&self.device),
             );
+            if self.show_grid {
+                self.grid_pipeline.draw(
+                    &self.device,
+                    cmd_buffer,
+                    self.draw_image.as_ref().unwrap().view,
+                    self.scene_data.buffer.device_address(&self.device),
+                );
+            }
 
-            let ctx = SubmitContext::new(self);
-            self.egui_pipeline.begin_frame(&self.window);
+            if self.show_gui {
+                let ctx = SubmitContext::new(self);
+                self.egui_pipeline.begin_frame(&self.window);
 
-            self.gui();
+                self.gui();
 
-            let output = self.egui_pipeline.end_frame(&self.window);
-            let meshes = self
-                .egui_pipeline
-                .context()
-                .tessellate(output.shapes, self.window.scale_factor() as f32);
+                let output = self.egui_pipeline.end_frame(&self.window);
+                let meshes = self
+                    .egui_pipeline
+                    .context()
+                    .tessellate(output.shapes, self.window.scale_factor() as f32);
 
-            self.egui_pipeline.draw(
-                &self.device,
-                cmd_buffer,
-                self.unorm_draw_image_view,
-                self.texture_manager.descriptor_set(),
-                output.textures_delta,
-                meshes,
-                &mut self.texture_manager,
-                ctx,
-                (self.current_frame % FRAME_OVERLAP as u32) as usize,
-            );
+                self.egui_pipeline.draw(
+                    &self.device,
+                    cmd_buffer,
+                    self.unorm_draw_image_view,
+                    self.texture_manager.descriptor_set(),
+                    output.textures_delta,
+                    meshes,
+                    &mut self.texture_manager,
+                    ctx,
+                    (self.current_frame % FRAME_OVERLAP as u32) as usize,
+                );
+            }
 
             // prepare copying of the draw image to the swapchain image
             util::transition_image(
@@ -931,6 +952,7 @@ impl App {
             let viewproj = proj * view;
             self.scene_data.data.view = view.to_cols_array_2d();
             self.scene_data.data.proj = proj.to_cols_array_2d();
+            self.scene_data.data.unproj = (view.inverse() * self.camera.proj().inverse()).to_cols_array_2d();
             self.scene_data.data.viewproj = viewproj.to_cols_array_2d();
             SubmitContext {
                 device: self.device.clone(),
@@ -946,11 +968,15 @@ impl App {
 
     fn gui(&mut self) {
         let egui_ctx = self.egui_pipeline.context();
+        egui_ctx.style_mut(|style| {
+            style.visuals.window_shadow = egui::epaint::Shadow::NONE;
+        });
         egui::Window::new("Hello world!").show(egui_ctx, |ui| {
             ui.label("Hello World!");
             if ui.button("FINALLY!!!!!").clicked() {
                 debug!("huge W");
             }
+            ui.checkbox(&mut self.show_grid, "Show grid");
             ui.colored_label(egui::Color32::RED, "This is red text");
             ui.colored_label(egui::Color32::GREEN, "This is green text");
             ui.colored_label(egui::Color32::BLUE, "This is blue text");

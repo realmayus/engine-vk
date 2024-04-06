@@ -1,4 +1,5 @@
 pub mod egui;
+pub mod grid;
 pub mod mesh;
 
 use crate::{DEPTH_FORMAT, SWAPCHAIN_IMAGE_FORMAT};
@@ -91,4 +92,17 @@ impl Default for PipelineBuilder<'_> {
                 .depth_attachment_format(DEPTH_FORMAT),
         }
     }
+}
+
+#[repr(C)]
+#[repr(align(16))]
+#[derive(Clone)]
+pub struct GpuSceneData {
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
+    pub viewproj: [[f32; 4]; 4],
+    pub unproj: [[f32; 4]; 4],
+    pub ambient_color: [f32; 4],
+    pub sun_dir: [f32; 4],
+    pub sun_color: [f32; 4],
 }
