@@ -1,5 +1,6 @@
 use crate::resources::{AllocatedBuffer, Allocator, DescriptorAllocator};
 use ash::{vk, Device};
+use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec4};
 use std::error::Error;
 
@@ -14,13 +15,16 @@ pub struct FrameData {
     pub stale_buffers: Vec<AllocatedBuffer>,
 }
 
+#[repr(C)]
+#[repr(align(16))]
+#[derive(Clone)]
 pub struct GpuSceneData {
-    pub view: Mat4,
-    pub proj: Mat4,
-    pub viewproj: Mat4,
-    pub ambient_color: Vec4,
-    pub sun_dir: Vec4,
-    pub sun_color: Vec4,
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
+    pub viewproj: [[f32; 4]; 4],
+    pub ambient_color: [f32; 4],
+    pub sun_dir: [f32; 4],
+    pub sun_color: [f32; 4],
 }
 
 #[derive(Default)]
@@ -232,5 +236,16 @@ pub fn load_shader_module(device: &Device, code: &[u8]) -> Result<vk::ShaderModu
 macro_rules! frame {
     ($m: ident) => {
         &mut $m.frames[($m.current_frame % FRAME_OVERLAP as u32) as usize]
+    };
+}
+
+#[macro_export]
+macro_rules! observe {
+    ($field:expr, $code:block, |$model:ident| $update:block) => {
+        let before = $field.clone();
+        $code
+        if before != $field {
+            $update
+        }
     };
 }

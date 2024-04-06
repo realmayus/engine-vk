@@ -16,7 +16,7 @@ pub struct MeshPipeline {
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 pub(crate) struct PushConstants {
-    pub(crate) world_matrix: [[f32; 4]; 4],
+    pub(crate) scene_data: vk::DeviceAddress,
     pub(crate) vertex_buffer: vk::DeviceAddress,
 }
 
@@ -105,6 +105,7 @@ impl MeshPipeline {
         target_view: vk::ImageView,
         depth_view: vk::ImageView,
         bindless_descriptor_set: vk::DescriptorSet,
+        scene_data: vk::DeviceAddress,
     ) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(target_view)
@@ -130,19 +131,6 @@ impl MeshPipeline {
             })
             .layer_count(1)
             .view_mask(0);
-        let world = {
-            let view = Mat4::look_at_rh(Vec3::new(2.0, 3.0, 5.0), Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0));
-            let mut proj = Mat4::perspective_rh(
-                60.0f32.to_radians(),
-                self.window_size.0 as f32 / self.window_size.1 as f32,
-                10000.0,
-                0.1,
-            );
-            proj.y_axis.y *= -1.0;
-
-            proj * view
-        };
-
         unsafe {
             device.cmd_bind_descriptor_sets(
                 cmd,
@@ -159,7 +147,7 @@ impl MeshPipeline {
             device.cmd_set_scissor(cmd, 0, &[self.scissor]);
             for mesh in meshes {
                 let push_constants = PushConstants {
-                    world_matrix: world.to_cols_array_2d(),
+                    scene_data,
                     vertex_buffer: mesh.vertex_buffer_address(),
                 };
                 device.cmd_push_constants(

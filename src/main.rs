@@ -1,5 +1,6 @@
 extern crate core;
 
+mod camera;
 mod gltf;
 mod pipeline;
 mod resources;
@@ -9,7 +10,7 @@ mod util;
 
 use crate::resources::{
     update_set, AllocUsage, AllocatedBuffer, AllocatedImage, Allocator, DescriptorAllocator, DescriptorBufferWriteInfo,
-    DescriptorImageWriteInfo, PoolSizeRatio, TextureManager,
+    DescriptorImageWriteInfo, PoolSizeRatio, TextureManager, WrappedBuffer,
 };
 use crate::util::{device_discovery, DeletionQueue, DescriptorLayoutBuilder, GpuSceneData};
 use ash::khr::swapchain;
@@ -69,9 +70,10 @@ struct App {
     immediate_command_buffer: vk::CommandBuffer,
     depth_image: Option<AllocatedImage>,
     meshes: Vec<Mesh>,
-    scene_data: GpuSceneData,
     scene_data_layout: vk::DescriptorSetLayout,
+    scene_data: WrappedBuffer<GpuSceneData>,
     texture_manager: TextureManager,
+    camera: camera::Camera,
 }
 
 struct SubmitContext {
@@ -185,8 +187,36 @@ impl App {
             Self::init_descriptors(&device, draw_image.view, &mut deletion_queue);
         let (bindless_descriptor_pool, bindless_descriptor_set, bindless_set_layout) = Self::init_bindless(&device);
         let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
+        let mut scene_data_buffer = WrappedBuffer {
+            buffer: AllocatedBuffer::new(
+                &device,
+                &mut allocator,
+                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                AllocUsage::GpuOnly,
+                std::mem::size_of::<GpuSceneData>() as vk::DeviceSize,
+                Some("Scene Data Buffer".into()),
+            ),
+            data: GpuSceneData {
+                view: Default::default(),
+                proj: Default::default(),
+                viewproj: Default::default(),
+                ambient_color: Default::default(),
+                sun_dir: Default::default(),
+                sun_color: Default::default(),
+            },
+        };
+
         let device = Rc::new(device);
         let allocator = Rc::new(RefCell::new(allocator));
+        SubmitContext {
+            device: device.clone(),
+            allocator: allocator.clone(),
+            fence: immediate_fence,
+            cmd_buffer: immediate_command_buffer,
+            queue: graphics_queue.0,
+            cleanup: None,
+        }
+        .immediate_submit(Box::new(|ctx| scene_data_buffer.write(ctx)));
 
         let egui_pipeline = EguiPipeline::new(
             &device,
@@ -213,6 +243,8 @@ impl App {
         }
         .immediate_submit(Box::new(|ctx| TextureManager::new(bindless_descriptor_set, ctx)));
         info!("Init done.");
+        let camera = camera::Camera::new(window_size.0 as f32, window_size.1 as f32);
+
         Ok(App {
             entry,
             instance,
@@ -245,15 +277,9 @@ impl App {
             immediate_fence,
             meshes: vec![],
             scene_data_layout,
-            scene_data: GpuSceneData {
-                view: glam::Mat4::look_at_rh(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)),
-                proj: glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, window_size.0 as f32 / window_size.1 as f32, 0.1, 100.0), // Todo update proj
-                viewproj: Default::default(),
-                ambient_color: Default::default(),
-                sun_dir: Default::default(),
-                sun_color: Default::default(),
-            },
+            scene_data: scene_data_buffer,
             texture_manager,
+            camera,
         })
     }
 
@@ -766,40 +792,6 @@ impl App {
                 vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
             );
 
-            let mut scene_data_buffer = AllocatedBuffer::new(
-                &self.device,
-                &mut self.allocator.borrow_mut(),
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                AllocUsage::Shared,
-                std::mem::size_of::<GpuSceneData>() as vk::DeviceSize,
-                Some("Scene Data Buffer".into()),
-            );
-
-            let map = scene_data_buffer
-                .allocation
-                .map(AshMemoryDevice::wrap(&self.device), 0, std::mem::size_of::<GpuSceneData>())
-                .unwrap();
-            // copy scene data to buffer
-            let scene_data_ptr = map.as_ptr() as *mut GpuSceneData;
-            scene_data_ptr.copy_from_nonoverlapping(&self.scene_data, 1);
-            let global_descriptor = frame!(self).descriptor_allocator.allocate(&self.device, self.scene_data_layout);
-
-            update_set(
-                &self.device,
-                global_descriptor,
-                &[],
-                &[DescriptorBufferWriteInfo {
-                    binding: 0,
-                    array_index: 0,
-                    buffer: scene_data_buffer.buffer,
-                    size: std::mem::size_of::<GpuSceneData>() as vk::DeviceSize,
-                    offset: 0,
-                    ty: vk::DescriptorType::UNIFORM_BUFFER,
-                }],
-            );
-
-            frame!(self).stale_buffers.push(scene_data_buffer);
-
             self.mesh_pipeline.draw(
                 &self.device,
                 cmd_buffer,
@@ -807,22 +799,13 @@ impl App {
                 self.draw_image.as_ref().unwrap().view,
                 self.depth_image.as_ref().unwrap().view,
                 self.texture_manager.descriptor_set(),
+                self.scene_data.buffer.device_address(&self.device),
             );
 
             let ctx = SubmitContext::new(self);
             self.egui_pipeline.begin_frame(&self.window);
-            let egui_ctx = self.egui_pipeline.context();
-            egui::Window::new("Hello world!").show(egui_ctx, |ui| {
-                ui.label("Hello World!");
-                ui.add(egui::Slider::new(&mut self.scene_data.sun_dir.x, 69.0..=420.0).text("AWESOMENESS"));
-                if ui.button("FINALLY!!!!!").clicked() {
-                    debug!("huge W");
-                }
-                ui.colored_label(egui::Color32::RED, "This is red text");
-                ui.colored_label(egui::Color32::GREEN, "This is green text");
-                ui.colored_label(egui::Color32::BLUE, "This is blue text");
-                ui.label("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse");
-            });
+
+            self.gui();
 
             let output = self.egui_pipeline.end_frame(&self.window);
             let meshes = self
@@ -834,14 +817,12 @@ impl App {
                 &self.device,
                 cmd_buffer,
                 self.unorm_draw_image_view,
-                self.depth_image.as_ref().unwrap().view,
                 self.texture_manager.descriptor_set(),
                 output.textures_delta,
                 meshes,
                 &mut self.texture_manager,
                 ctx,
                 (self.current_frame % FRAME_OVERLAP as u32) as usize,
-                &self.window,
             );
 
             // prepare copying of the draw image to the swapchain image
@@ -941,6 +922,63 @@ impl App {
     fn input(&mut self, event: &winit::event::WindowEvent) -> bool {
         self.egui_pipeline.input(&self.window, event)
     }
+
+    fn update(&mut self) {
+        if self.camera.dirty {
+            self.camera.dirty = false;
+            let view = self.camera.view();
+            let proj = self.camera.proj();
+            let viewproj = proj * view;
+            self.scene_data.data.view = view.to_cols_array_2d();
+            self.scene_data.data.proj = proj.to_cols_array_2d();
+            self.scene_data.data.viewproj = viewproj.to_cols_array_2d();
+            SubmitContext {
+                device: self.device.clone(),
+                allocator: self.allocator.clone(),
+                fence: self.immediate_fence,
+                cmd_buffer: self.immediate_command_buffer,
+                queue: self.graphics_queue.0,
+                cleanup: None,
+            }
+            .immediate_submit(Box::new(|ctx| self.scene_data.write(ctx)));
+        }
+    }
+
+    fn gui(&mut self) {
+        let egui_ctx = self.egui_pipeline.context();
+        egui::Window::new("Hello world!").show(egui_ctx, |ui| {
+            ui.label("Hello World!");
+            if ui.button("FINALLY!!!!!").clicked() {
+                debug!("huge W");
+            }
+            ui.colored_label(egui::Color32::RED, "This is red text");
+            ui.colored_label(egui::Color32::GREEN, "This is green text");
+            ui.colored_label(egui::Color32::BLUE, "This is blue text");
+            ui.label("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse");
+
+            observe!(
+                self.camera.fov,
+                {
+                    ui.add(egui::Slider::new(&mut self.camera.fov, 0.0..=180.0).text("FOV"));
+                },
+                |_v| {
+                    self.camera.dirty = true;
+                }
+            );
+
+            observe!(
+                self.camera.position,
+                {
+                    ui.add(egui::Slider::new(&mut self.camera.position.x, -5.0..=5.0).text("X"));
+                    ui.add(egui::Slider::new(&mut self.camera.position.y, -5.0..=5.0).text("Y"));
+                    ui.add(egui::Slider::new(&mut self.camera.position.z, -5.0..=5.0).text("Z"));
+                },
+                |_v| {
+                    self.camera.dirty = true;
+                }
+            );
+        });
+    }
 }
 
 impl Drop for App {
@@ -1006,6 +1044,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             event: WindowEvent::RedrawRequested,
             ..
         } => {
+            app.update();
             app.draw();
             app.window.request_redraw();
         }

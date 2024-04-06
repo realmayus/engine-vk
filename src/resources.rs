@@ -4,6 +4,7 @@ use std::mem;
 
 use ash::vk::{DeviceMemory, DeviceSize};
 use ash::{vk, Device};
+use bytemuck::Pod;
 use gpu_alloc_ash::AshMemoryDevice;
 use log::debug;
 
@@ -180,6 +181,29 @@ pub fn update_set(
     unsafe { device.update_descriptor_sets(&writes, &[]) }
 }
 
+pub struct WrappedBuffer<T>
+where
+    T: Clone,
+{
+    pub buffer: AllocatedBuffer,
+    pub data: T,
+}
+
+impl<T> WrappedBuffer<T>
+where
+    T: Clone,
+{
+    pub fn write(&mut self, ctx: &mut SubmitContext) {
+        self.buffer.write(
+            &[self.data.clone()],
+            0,
+            &ctx.device,
+            &mut ctx.allocator.borrow_mut(),
+            ctx.cmd_buffer,
+        );
+    }
+}
+
 pub struct AllocatedBuffer {
     pub buffer: vk::Buffer,
     pub(crate) allocation: Allocation,
@@ -234,6 +258,42 @@ impl AllocatedBuffer {
             size,
             label,
         }
+    }
+
+    pub fn write<T>(&mut self, data: &[T], offset: u64, device: &Device, allocator: &mut Allocator, cmd_buffer: vk::CommandBuffer) {
+        let size = mem::size_of::<T>() as u64 * data.len() as u64;
+        let mut staging = AllocatedBuffer::new(
+            device,
+            allocator,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            AllocUsage::Shared,
+            size,
+            Some("Staging Buffer".into()),
+        );
+
+        let map = unsafe {
+            staging
+                .allocation
+                .map(AshMemoryDevice::wrap(device), 0, staging.size as usize)
+                .unwrap()
+        };
+
+        let staging_ptr = map.as_ptr() as *mut T;
+        unsafe {
+            staging_ptr.copy_from_nonoverlapping(data.as_ptr(), data.len());
+        }
+        let staging_copy = vk::BufferCopy {
+            src_offset: 0,
+            dst_offset: offset,
+            size,
+        };
+        unsafe {
+            device.cmd_copy_buffer(cmd_buffer, staging.buffer, self.buffer, &[staging_copy]);
+        }
+    }
+
+    pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
+        unsafe { device.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(self.buffer)) }
     }
 
     pub(crate) fn destroy(self, device: &Device, allocator: &mut Allocator) {

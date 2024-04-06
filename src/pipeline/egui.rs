@@ -1,14 +1,13 @@
 use crate::pipeline::PipelineBuilder;
 use crate::resources::{AllocUsage, AllocatedBuffer, Allocator, Texture, TextureId, TextureManager};
-use crate::scene::mesh::Mesh;
 use crate::util::{load_shader_module, DeletionQueue};
-use crate::{SubmitContext, DEPTH_FORMAT, FRAME_OVERLAP};
+use crate::{SubmitContext, FRAME_OVERLAP};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 use egui::ahash::{HashMap, HashMapExt};
 use egui::epaint::{ImageDelta, Primitive};
 use egui::{Context, FullOutput, ImageData, TexturesDelta};
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 use log::debug;
 use std::ffi::CStr;
 use winit::window::Window;
@@ -187,14 +186,12 @@ impl EguiPipeline {
         device: &Device,
         cmd: vk::CommandBuffer,
         target_view: vk::ImageView,
-        depth_view: vk::ImageView,
         bindless_descriptor_set: vk::DescriptorSet,
         textures_delta: TexturesDelta,
         clipped_meshes: Vec<egui::ClippedPrimitive>,
         texture_manager: &mut TextureManager,
         submit_context: SubmitContext,
         image_index: usize,
-        window: &Window,
     ) {
         for (id, image_delta) in textures_delta.set {
             self.update_texture(id, image_delta, submit_context.clone(), texture_manager);
@@ -311,8 +308,6 @@ impl EguiPipeline {
             };
             let vertices = &emesh.vertices;
             let indices = &emesh.indices;
-            // copy vertices and indices into mesh buffer
-            // todo!();
             unsafe {
                 device.cmd_push_constants(
                     cmd,
