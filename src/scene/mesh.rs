@@ -1,10 +1,10 @@
 use crate::pipeline::Vertex;
-use crate::resources::{AllocUsage, AllocatedBuffer, Allocator};
+use crate::resource::buffer::AllocatedBuffer;
+use crate::resource::{AllocUsage, Allocator};
 use crate::SubmitContext;
 use ash::{vk, Device};
 use glam::{Vec2, Vec3};
 use gpu_alloc_ash::AshMemoryDevice;
-use log::{debug, info};
 
 pub struct GpuMesh {
     index_buffer: AllocatedBuffer,
@@ -70,7 +70,7 @@ impl Mesh {
             vk::BufferUsageFlags::TRANSFER_SRC,
             AllocUsage::Shared,
             vertex_buffer_size + index_buffer_size,
-            Some("Staging Buffer".into()),
+            Some("Mesh Staging Buffer".into()),
         );
 
         let map = unsafe {

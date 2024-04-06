@@ -3,7 +3,7 @@ use crate::scene::mesh::Mesh;
 use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+
 use std::ffi::CStr;
 
 pub struct MeshPipeline {
@@ -63,7 +63,7 @@ impl MeshPipeline {
             device.destroy_shader_module(fragment_shader, None);
         }
 
-        deletion_queue.push(move |device, allocator| unsafe {
+        deletion_queue.push(move |device, _allocator| unsafe {
             device.destroy_pipeline_layout(layout, None);
             device.destroy_pipeline(pipeline, None);
         });

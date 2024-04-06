@@ -725,7 +725,7 @@ dependencies = [
 [[package]]
 name = "gpu-alloc"
 version = "0.6.0"
-source = "git+https://github.com/realmayus/gpu-alloc.git#9f463aa07613df0b0d812e24cf3035dc5e592df7"
+source = "git+https://github.com/realmayus/gpu-alloc.git?branch=labels#2efe5b067dd23c0aadda4b78e5d84282238e802a"
 dependencies = [
  "bitflags 2.5.0",
  "gpu-alloc-types",
@@ -733,8 +733,8 @@ dependencies = [
 
 [[package]]
 name = "gpu-alloc-ash"
-version = "0.6.0"
-source = "git+https://github.com/realmayus/gpu-alloc.git#9f463aa07613df0b0d812e24cf3035dc5e592df7"
+version = "0.7.0"
+source = "git+https://github.com/realmayus/gpu-alloc.git?branch=labels#2efe5b067dd23c0aadda4b78e5d84282238e802a"
 dependencies = [
  "ash",
  "gpu-alloc-types",
@@ -744,7 +744,7 @@ dependencies = [
 [[package]]
 name = "gpu-alloc-types"
 version = "0.3.0"
-source = "git+https://github.com/realmayus/gpu-alloc.git#9f463aa07613df0b0d812e24cf3035dc5e592df7"
+source = "git+https://github.com/realmayus/gpu-alloc.git?branch=labels#2efe5b067dd23c0aadda4b78e5d84282238e802a"
 dependencies = [
  "bitflags 2.5.0",
 ]

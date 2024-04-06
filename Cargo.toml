@@ -10,8 +10,8 @@ ash = { version = "0.38.0", features = ["linked"] }
 ash-window = "0.13.0"
 winit = "0.29.15"
 raw-window-handle = "0.6.0"
-gpu-alloc = { git = "https://github.com/realmayus/gpu-alloc.git"}
-gpu-alloc-ash = { git = "https://github.com/realmayus/gpu-alloc.git"}
+gpu-alloc = { git = "https://github.com/realmayus/gpu-alloc.git", branch = "labels" }
+gpu-alloc-ash = { git = "https://github.com/realmayus/gpu-alloc.git", branch = "labels" }
 log = "0.4.21"
 env_logger = "0.11.3"
 bytemuck = { version = "1.15.0" , features = ["derive"]}

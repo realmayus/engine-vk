@@ -1,6 +1,7 @@
-use crate::resources::{AllocatedBuffer, Allocator, DescriptorAllocator};
+use crate::resource::{Allocator, DescriptorAllocator};
 use ash::{vk, Device};
-use bytemuck::{Pod, Zeroable};
+
+use crate::resource::buffer::AllocatedBuffer;
 use std::error::Error;
 
 pub struct FrameData {
@@ -104,7 +105,7 @@ pub mod device_discovery {
             if family.queue_flags.contains(vk::QueueFlags::GRAPHICS) && graphics.is_none() {
                 graphics = Some(index);
             }
-            let x = unsafe { surface.get_physical_device_surface_formats(device, surface_khr).unwrap() };
+            let _x = unsafe { surface.get_physical_device_surface_formats(device, surface_khr).unwrap() };
             let present_support = unsafe { surface.get_physical_device_surface_support(device, index, surface_khr).unwrap() };
             if present_support && present.is_none() {
                 present = Some(index);

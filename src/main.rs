@@ -1,32 +1,35 @@
 extern crate core;
 
+mod asset;
 mod camera;
 mod gltf;
 mod pipeline;
-mod resources;
+mod resource;
 mod scene;
 mod ui;
 mod util;
 
-use crate::resources::{
-    update_set, AllocUsage, AllocatedBuffer, AllocatedImage, Allocator, DescriptorAllocator, DescriptorBufferWriteInfo,
-    DescriptorImageWriteInfo, PoolSizeRatio, TextureManager, WrappedBuffer,
-};
-use crate::util::{device_discovery, DeletionQueue, DescriptorLayoutBuilder};
+use crate::resource::{AllocUsage, Allocator, DescriptorAllocator, PoolSizeRatio};
+use crate::util::{device_discovery, DeletionQueue};
 use ash::khr::swapchain;
 use ash::vk::{DescriptorSet, DescriptorSetLayout};
 use ash::{khr, vk, Device, Instance};
-use glam::Vec3;
+
+use asset::texture::TextureManager;
 use gpu_alloc::GpuAllocator;
-use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use gpu_alloc_ash::device_properties;
 use log::{debug, info};
 use pipeline::GpuSceneData;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use resource::buffer::{AllocatedBuffer, WrappedBuffer};
+use resource::image::AllocatedImage;
 use std::cell::RefCell;
 use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
 use util::FrameData;
+use winit::event::{ElementState, KeyEvent};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -61,9 +64,6 @@ struct App {
     main_deletion_queue: DeletionQueue,
     draw_image: Option<AllocatedImage>,
     unorm_draw_image_view: vk::ImageView,
-    draw_image_descriptor_set: vk::DescriptorSet,
-    draw_image_descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_allocator: DescriptorAllocator,
     bindless_descriptor_pool: vk::DescriptorPool,
     mesh_pipeline: MeshPipeline,
     egui_pipeline: EguiPipeline,
@@ -73,7 +73,6 @@ struct App {
     immediate_command_buffer: vk::CommandBuffer,
     depth_image: Option<AllocatedImage>,
     meshes: Vec<Mesh>,
-    scene_data_layout: vk::DescriptorSetLayout,
     scene_data: WrappedBuffer<GpuSceneData>,
     texture_manager: TextureManager,
     camera: camera::Camera,
@@ -188,8 +187,6 @@ impl App {
             Self::create_swapchain(&instance, &device, surface_khr, capabilities, &mut allocator, window_size);
         let (immediate_command_pool, immediate_command_buffer, immediate_fence, frames) =
             Self::init_commands(graphics_queue.1, &device, &mut deletion_queue);
-        let (descriptor_allocator, draw_image_descriptor_set_layout, draw_image_descriptor_set, scene_data_layout) =
-            Self::init_descriptors(&device, draw_image.view, &mut deletion_queue);
         let (bindless_descriptor_pool, bindless_descriptor_set, bindless_set_layout) = Self::init_bindless(&device);
         let grid_pipeline = GridPipeline::new(&device, window_size, &mut deletion_queue);
         let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
@@ -273,9 +270,6 @@ impl App {
             draw_image: Some(draw_image), // must be present at all times, Option<_> because we need ownership when destroying
             unorm_draw_image_view,
             depth_image: Some(depth_image),
-            descriptor_allocator,
-            draw_image_descriptor_set,
-            draw_image_descriptor_set_layout,
             bindless_descriptor_pool,
             mesh_pipeline,
             egui_pipeline,
@@ -284,7 +278,6 @@ impl App {
             immediate_command_buffer,
             immediate_fence,
             meshes: vec![],
-            scene_data_layout,
             scene_data: scene_data_buffer,
             texture_manager,
             camera,
@@ -510,7 +503,7 @@ impl App {
             .command_buffer_count(1);
         let immediate_command_buffer = unsafe { device.allocate_command_buffers(&immediate_alloc_info).unwrap()[0] };
         let immediate_fence = unsafe { device.create_fence(&fence_create_info, None).unwrap() };
-        deletion_queue.push(move |device, allocator| unsafe {
+        deletion_queue.push(move |device, _allocator| unsafe {
             device.destroy_command_pool(immediate_command_pool, None);
             device.destroy_fence(immediate_fence, None);
         });
@@ -646,49 +639,6 @@ impl App {
         )
     }
 
-    fn init_descriptors(
-        device: &Device,
-        draw_image: vk::ImageView,
-        deletion_queue: &mut DeletionQueue,
-    ) -> (
-        DescriptorAllocator,
-        vk::DescriptorSetLayout,
-        vk::DescriptorSet,
-        vk::DescriptorSetLayout,
-    ) {
-        let sizes = [PoolSizeRatio {
-            descriptor_type: vk::DescriptorType::STORAGE_IMAGE,
-            ratio: 1.0,
-        }];
-        let mut descriptor_pool = DescriptorAllocator::new(device, 1, &sizes);
-        let builder = DescriptorLayoutBuilder::default().add_binding(0, vk::DescriptorType::STORAGE_IMAGE, vk::ShaderStageFlags::COMPUTE);
-        let layout = builder.build(device);
-        let descriptor_set = descriptor_pool.allocate(device, layout);
-
-        // update_set(device, descriptor_set, &[
-        //     DescriptorImageWriteInfo {
-        //         binding: 0,
-        //         array_index: 0,
-        //         image_view: draw_image,
-        //         sampler: vk::Sampler::null(),
-        //         layout: vk::ImageLayout::GENERAL,
-        //         ty: vk::DescriptorType::STORAGE_IMAGE,
-        //     },
-        // ], &[]);
-
-        let scene_info_builder = DescriptorLayoutBuilder::default().add_binding(
-            0,
-            vk::DescriptorType::UNIFORM_BUFFER,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-        );
-        let scene_info_layout = scene_info_builder.build(device);
-        deletion_queue.push(move |device, allocator| unsafe {
-            device.destroy_descriptor_set_layout(layout, None);
-            device.destroy_descriptor_set_layout(scene_info_layout, None);
-        });
-        (descriptor_pool, layout, descriptor_set, scene_info_layout)
-    }
-
     unsafe fn destroy_swapchain(&mut self) {
         self.swapchain.0.destroy_swapchain(self.swapchain.1, None);
         for view in self.swapchain_views.drain(..) {
@@ -702,6 +652,7 @@ impl App {
         self.mesh_pipeline.resize(size);
         self.egui_pipeline.resize(size);
         self.grid_pipeline.resize(size);
+        self.camera.resize(size.0 as f32, size.1 as f32);
     }
     fn resize_swapchain(&mut self, size: (u32, u32)) {
         unsafe {
@@ -715,6 +666,7 @@ impl App {
                 .take()
                 .unwrap()
                 .destroy(&self.device, &mut self.allocator.borrow_mut());
+            self.device.destroy_image_view(self.unorm_draw_image_view, None);
         }
         self.window_size = size;
         let capabilities = unsafe {
@@ -827,7 +779,12 @@ impl App {
 
                 self.gui();
 
-                let output = self.egui_pipeline.end_frame(&self.window);
+                let output = self.egui_pipeline.end_frame(
+                    &self.window,
+                    &mut self.texture_manager,
+                    &self.device,
+                    &mut self.allocator.borrow_mut(),
+                );
                 let meshes = self
                     .egui_pipeline
                     .context()
@@ -940,8 +897,45 @@ impl App {
         }
     }
 
-    fn input(&mut self, event: &winit::event::WindowEvent) -> bool {
-        self.egui_pipeline.input(&self.window, event)
+    fn input_window(&mut self, event: &winit::event::WindowEvent) {
+        if !self.egui_pipeline.input(&self.window, event) {
+            match event {
+                winit::event::WindowEvent::MouseInput { button, state, .. } => {
+                    if *button == winit::event::MouseButton::Left && *state == winit::event::ElementState::Pressed {
+                        self.camera.on_mouse_drag(true);
+                    } else if *button == winit::event::MouseButton::Left && *state == winit::event::ElementState::Released {
+                        self.camera.on_mouse_drag(false);
+                    }
+                }
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            repeat: false,
+                            state: ElementState::Pressed,
+                            physical_key: PhysicalKey::Code(key_code),
+                            ..
+                        },
+                    ..
+                } => {
+                    if *key_code == KeyCode::F10 {
+                        self.show_gui = !self.show_gui;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn input_device(&mut self, event: &winit::event::DeviceEvent) {
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                self.camera.on_mouse_move((delta.0 as f32, delta.1 as f32));
+            }
+            winit::event::DeviceEvent::MouseWheel { delta } => {
+                self.camera.on_mouse_scroll(*delta);
+            }
+            _ => {}
+        }
     }
 
     fn update(&mut self) {
@@ -972,15 +966,7 @@ impl App {
             style.visuals.window_shadow = egui::epaint::Shadow::NONE;
         });
         egui::Window::new("Hello world!").show(egui_ctx, |ui| {
-            ui.label("Hello World!");
-            if ui.button("FINALLY!!!!!").clicked() {
-                debug!("huge W");
-            }
             ui.checkbox(&mut self.show_grid, "Show grid");
-            ui.colored_label(egui::Color32::RED, "This is red text");
-            ui.colored_label(egui::Color32::GREEN, "This is green text");
-            ui.colored_label(egui::Color32::BLUE, "This is blue text");
-            ui.label("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse");
 
             observe!(
                 self.camera.fov,
@@ -1012,7 +998,6 @@ impl Drop for App {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.main_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
-            self.descriptor_allocator.destroy_pools(&self.device);
             self.device.destroy_descriptor_pool(self.bindless_descriptor_pool, None);
             for mut mesh in self.meshes.drain(..) {
                 mesh.destroy(&self.device, &mut self.allocator.borrow_mut());
@@ -1054,7 +1039,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new();
 
     let mut app = App::new(event_loop.as_ref().unwrap())?;
-    let models = gltf::load_gltf(Path::new("src/assets/cube_light_tan.glb"));
+    let models = gltf::load_gltf(Path::new("../assets/cube_light_tan.glb"));
     let meshes = models.into_iter().flat_map(|mo| mo.meshes).collect::<Vec<_>>();
     info!("Loaded gltf with {} meshes", meshes.len());
 
@@ -1097,7 +1082,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Event::WindowEvent { event, .. } => {
-            app.input(&event);
+            app.input_window(&event);
+        }
+        Event::DeviceEvent { event, .. } => {
+            app.input_device(&event);
         }
         _ => {}
     })?)

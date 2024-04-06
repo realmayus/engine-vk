@@ -1,5 +1,5 @@
 use crate::pipeline::PipelineBuilder;
-use crate::resources::{AllocUsage, AllocatedBuffer, Allocator, Texture, TextureId, TextureManager};
+use crate::resource::{AllocUsage, Allocator};
 use crate::util::{load_shader_module, DeletionQueue};
 use crate::{SubmitContext, FRAME_OVERLAP};
 use ash::{vk, Device};
@@ -7,7 +7,9 @@ use bytemuck::{Pod, Zeroable};
 use egui::ahash::{HashMap, HashMapExt};
 use egui::epaint::{ImageDelta, Primitive};
 use egui::{Context, FullOutput, ImageData, TexturesDelta};
-use glam::Vec3;
+
+use crate::asset::texture::{Texture, TextureId, TextureManager};
+use crate::resource::buffer::AllocatedBuffer;
 use log::debug;
 use std::ffi::CStr;
 use winit::window::Window;
@@ -25,7 +27,6 @@ pub struct EguiPipeline {
     textures: HashMap<EguiTextureId, TextureId>,
     mesh_buffers: Vec<(AllocatedBuffer, AllocatedBuffer)>, // Vertex buffer, index buffer
     bindless_set_layout: vk::DescriptorSetLayout,
-    raw_input: egui::RawInput,
 }
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
@@ -103,7 +104,7 @@ impl EguiPipeline {
             device.destroy_shader_module(fragment_shader, None);
         }
 
-        deletion_queue.push(move |device, allocator| unsafe {
+        deletion_queue.push(move |device, _allocator| unsafe {
             device.destroy_pipeline_layout(layout, None);
             device.destroy_pipeline(pipeline, None);
         });
@@ -156,7 +157,6 @@ impl EguiPipeline {
             textures: HashMap::new(),
             mesh_buffers: mesh_buffers.into(),
             bindless_set_layout,
-            raw_input: egui::RawInput::default(),
         }
     }
     pub fn context(&self) -> &Context {
@@ -328,8 +328,18 @@ impl EguiPipeline {
             self.mesh_buffers[image_index].1.allocation.unmap(device);
         }
     }
-    pub fn end_frame(&mut self, window: &Window) -> FullOutput {
+    pub fn end_frame(
+        &mut self,
+        window: &Window,
+        texture_manager: &mut TextureManager,
+        device: &Device,
+        allocator: &mut Allocator,
+    ) -> FullOutput {
         let output = self.context.end_frame();
+        for to_free in &output.textures_delta.free {
+            let texture_id = self.textures.remove(to_free);
+            texture_manager.free(texture_id.unwrap(), device, allocator);
+        }
         self.egui_winit.handle_platform_output(window, output.platform_output.clone());
         output
     }

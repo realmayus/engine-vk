@@ -1,5 +1,5 @@
 use crate::pipeline::PipelineBuilder;
-use crate::scene::mesh::Mesh;
+
 use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
@@ -64,7 +64,7 @@ impl GridPipeline {
             device.destroy_shader_module(fragment_shader, None);
         }
 
-        deletion_queue.push(move |device, allocator| unsafe {
+        deletion_queue.push(move |device, _allocator| unsafe {
             device.destroy_pipeline_layout(layout, None);
             device.destroy_pipeline(pipeline, None);
         });
