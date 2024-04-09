@@ -1,4 +1,4 @@
-use crate::immediate_submit::SubmitContext;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocation, Allocator, LOG_ALLOCATIONS};
 use ash::vk::DeviceSize;
 use ash::{vk, Device};

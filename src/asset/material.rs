@@ -1,6 +1,6 @@
 use crate::asset::texture::TextureId;
-use crate::immediate_submit::SubmitContext;
 use crate::resource::buffer::AllocatedBuffer;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::AllocUsage;
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};

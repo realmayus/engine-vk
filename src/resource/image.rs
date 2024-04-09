@@ -1,5 +1,5 @@
-use crate::immediate_submit::SubmitContext;
 use crate::resource::buffer::AllocatedBuffer;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocation, Allocator, LOG_ALLOCATIONS};
 use crate::util::transition_image;
 use ash::vk::DeviceSize;

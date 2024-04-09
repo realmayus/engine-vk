@@ -1,7 +1,7 @@
 use crate::asset::material::MaterialId;
-use crate::immediate_submit::SubmitContext;
 use crate::pipeline::Vertex;
 use crate::resource::buffer::AllocatedBuffer;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocator};
 use ash::{vk, Device};
 use glam::{Mat4, Vec2, Vec3};

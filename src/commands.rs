@@ -1,4 +1,4 @@
-use crate::immediate_submit::SubmitContext;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::App;
 use ash::vk;
 use std::path::PathBuf;

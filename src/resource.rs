@@ -199,3 +199,113 @@ impl AllocUsage {
         }
     }
 }
+
+pub mod immediate_submit {
+    // new module to hide SubmitContext's private fields
+    use crate::resource::Allocator;
+    use crate::App;
+    use ash::{vk, Device};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    pub struct SubmitContext {
+        pub device: Rc<Device>,
+        pub allocator: Rc<RefCell<Allocator>>,
+        fence: vk::Fence,
+        pub(crate) cmd_buffer: vk::CommandBuffer,
+        queue: vk::Queue,
+        cleanup: Vec<Box<dyn FnOnce(&Device, &mut Allocator)>>,
+    }
+
+    type ImmediateSubmitFn<'a, T> = Box<(dyn FnOnce(&mut SubmitContext) -> T + 'a)>;
+
+    impl SubmitContext {
+        pub fn new(
+            device: Rc<Device>,
+            allocator: Rc<RefCell<Allocator>>,
+            fence: vk::Fence,
+            cmd_buffer: vk::CommandBuffer,
+            queue: vk::Queue,
+        ) -> Self {
+            Self {
+                device,
+                allocator,
+                fence,
+                cmd_buffer,
+                queue,
+                cleanup: vec![],
+            }
+        }
+
+        pub fn from_app(app: &App) -> Self {
+            Self {
+                device: app.device.clone(),
+                allocator: app.allocator.clone(),
+                fence: app.immediate_fence,
+                cmd_buffer: app.immediate_command_buffer,
+                queue: app.graphics_queue.0,
+                cleanup: vec![],
+            }
+        }
+
+        /*
+        Submits all commands to the GPU. Then, all cleanup functions are executed. This consumes the context.
+         */
+        pub fn immediate_submit<T>(mut self, cmd: ImmediateSubmitFn<T>) -> T {
+            let cmd_buffer = self.cmd_buffer;
+            unsafe {
+                self.device.reset_fences(&[self.fence]).unwrap();
+                self.device
+                    .reset_command_buffer(cmd_buffer, vk::CommandBufferResetFlags::empty())
+                    .unwrap();
+                let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+                self.device.begin_command_buffer(cmd_buffer, &begin_info).unwrap();
+                let res = cmd(&mut self);
+                self.device.end_command_buffer(cmd_buffer).unwrap();
+                let cmd_buffer_submit = vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer);
+                let cmd_buffer_submits = [cmd_buffer_submit];
+                let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&cmd_buffer_submits);
+                let submits = [submit_info];
+                self.device.queue_submit2(self.queue, &submits, self.fence).unwrap();
+                self.device.wait_for_fences(&[self.fence], true, 1000000000).unwrap();
+                for cleanup_fn in self.cleanup {
+                    cleanup_fn(&self.device, &mut self.allocator.borrow_mut());
+                }
+                res
+            }
+        }
+
+        /*
+        Allows you to chain multiple submit contexts together. All cleanup functions are propagated to the topmost context and executed when the topmost context is submitted.
+         */
+        pub fn nest<T>(&mut self, f: ImmediateSubmitFn<T>) -> T {
+            let mut ctx = self.clone();
+            let res = f(&mut ctx);
+            self.cleanup.extend(ctx.cleanup);
+            res
+        }
+
+        /*
+        Adds a cleanup function to the context. Cleanup functions are executed when the context is submitted.
+         */
+        pub fn add_cleanup(&mut self, cleanup: Box<dyn FnOnce(&Device, &mut Allocator)>) {
+            self.cleanup.push(cleanup);
+        }
+    }
+
+    impl Clone for SubmitContext {
+        /*
+        Note that cloning does not propagate cleanup functions to the topmost context. Use nest for that.
+         */
+        fn clone(&self) -> Self {
+            Self {
+                device: self.device.clone(),
+                allocator: self.allocator.clone(),
+                fence: self.fence,
+                cmd_buffer: self.cmd_buffer,
+                queue: self.queue,
+                cleanup: vec![],
+            }
+        }
+    }
+}

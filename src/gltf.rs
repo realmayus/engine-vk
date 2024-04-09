@@ -1,7 +1,7 @@
 use crate::asset::material::MaterialManager;
 use crate::asset::material::{Material, MaterialId, PbrMaterial, RawMaterial};
 use crate::asset::texture::{Texture, TextureId, TextureManager};
-use crate::immediate_submit::SubmitContext;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::Allocator;
 use crate::scene::mesh::Mesh;
 use crate::scene::model::{Model, ModelId};

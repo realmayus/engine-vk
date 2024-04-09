@@ -1,5 +1,5 @@
-use crate::immediate_submit::SubmitContext;
 use crate::resource::image::AllocatedImage;
+use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{update_set, AllocUsage, Allocator, DescriptorImageWriteInfo};
 use ash::{vk, Device};
 use log::info;

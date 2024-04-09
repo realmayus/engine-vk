@@ -2,7 +2,7 @@ use crate::asset::texture::TEXTURE_IMAGE_FORMAT;
 use crate::pipeline::PipelineBuilder;
 use crate::resource::{AllocUsage, Allocator};
 use crate::util::{load_shader_module, DeletionQueue};
-use crate::{immediate_submit::SubmitContext, FRAME_OVERLAP};
+use crate::FRAME_OVERLAP;
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::{ImageDelta, Primitive};
@@ -10,6 +10,7 @@ use egui::{Context, FullOutput, ImageData, TexturesDelta};
 
 use crate::asset::texture::{Texture, TextureId, TextureManager};
 use crate::resource::buffer::AllocatedBuffer;
+use crate::resource::immediate_submit::SubmitContext;
 use hashbrown::HashMap;
 use log::debug;
 use std::ffi::CStr;
