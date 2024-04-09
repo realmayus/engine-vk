@@ -86,7 +86,7 @@ impl Gui {
         world: Rc<RefCell<World>>,
         texture_manager: Rc<RefCell<TextureManager>>,
         material_manager: Rc<RefCell<MaterialManager>>,
-        submit_context: SubmitContext,
+        _submit_context: SubmitContext,
     ) {
         ctx.style_mut(|style| {
             style.visuals.window_shadow = egui::epaint::Shadow::NONE;
@@ -145,7 +145,7 @@ impl Gui {
         });
 
         egui::Window::new("Assets").show(&ctx, |ui| {
-            let mut texture_manager = texture_manager.borrow_mut();
+            let texture_manager = texture_manager.borrow_mut();
             ui.label("Textures");
             self.image_lock = false;
             for texture in texture_manager.iter_textures() {

@@ -31,7 +31,7 @@ impl World {
         self.models
             .iter()
             .map(|m| m.id)
-            .filter(|(model)| !all_children.contains(&model))
+            .filter(|model| !all_children.contains(&model))
             .collect::<Vec<_>>()
     }
 

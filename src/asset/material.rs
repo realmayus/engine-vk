@@ -1,4 +1,4 @@
-use crate::asset::texture::TextureId;
+use crate::asset::texture::{TextureId, TextureManager};
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::AllocUsage;
@@ -99,10 +99,25 @@ pub struct MaterialManager {
 }
 
 impl MaterialManager {
-    pub fn new() -> Self {
+    pub const DEFAULT_MATERIAL: MaterialId = 0;
+    pub fn new(ctx: &mut SubmitContext) -> Self {
+        let default_material = ctx.nest(Box::new(|ctx| {
+            Material::new(
+                Some("Default material".into()),
+                RawMaterial::Pbr(PbrMaterial {
+                    texture: TextureManager::DEFAULT_TEXTURE_WHITE,
+                    albedo: [1.0, 1.0, 1.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.0,
+                    padding: 0.0,
+                }),
+                ctx,
+            )
+        }));
+
         Self {
-            materials: HashMap::new(),
-            max_id: 0,
+            materials: HashMap::from([(0, default_material)]),
+            max_id: 1,
         }
     }
 

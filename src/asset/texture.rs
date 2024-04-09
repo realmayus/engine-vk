@@ -43,7 +43,7 @@ impl Texture {
             image: img,
             id: 0,
             sampler,
-            data: Vec::from(data.clone()),
+            data: Vec::from(data),
         }
     }
 

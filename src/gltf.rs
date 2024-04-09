@@ -1,6 +1,6 @@
 use crate::asset::material::MaterialManager;
 use crate::asset::material::{Material, MaterialId, PbrMaterial, RawMaterial};
-use crate::asset::texture::{Texture, TextureId, TextureManager};
+use crate::asset::texture::{Texture, TextureManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::Allocator;
 use crate::scene::mesh::Mesh;
@@ -76,7 +76,7 @@ impl GltfReader {
     fn load_model(
         &mut self,
         node: &gltf::Node,
-        buffers: &Vec<gltf::buffer::Data>,
+        buffers: &[gltf::buffer::Data],
         images: &[ImageData],
         ctx: &mut SubmitContext,
         parent_transform: Mat4,
@@ -120,7 +120,7 @@ impl GltfReader {
                         .copied()
                         .unwrap_or_else(|| self.load_material(gltf_material, images, ctx))
                 } else {
-                    0 as MaterialId
+                    MaterialManager::DEFAULT_MATERIAL
                 };
                 let mut mesh = Mesh {
                     mem: None,
@@ -175,7 +175,7 @@ impl GltfReader {
             Material::new(
                 Some(material.name().unwrap_or_default().to_string()),
                 RawMaterial::Pbr(PbrMaterial {
-                    texture: texture.unwrap_or(0 as TextureId),
+                    texture: texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
                     albedo,
                     metallic: pbr.metallic_factor(),
                     roughness: pbr.roughness_factor(),

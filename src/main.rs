@@ -21,7 +21,6 @@ use crate::asset::material::MaterialManager;
 use crate::commands::{Command, CommandHandler};
 use crate::gltf::GltfReader;
 use asset::texture::TextureManager;
-use egui::TextBuffer;
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::device_properties;
 use log::{debug, info};
@@ -47,7 +46,7 @@ use winit::{
 use crate::pipeline::egui::EguiPipeline;
 use crate::pipeline::grid::GridPipeline;
 use crate::pipeline::mesh::MeshPipeline;
-use crate::scene::mesh::Mesh;
+
 use crate::scene::world::World;
 use crate::ui::Gui;
 
@@ -199,7 +198,15 @@ impl App {
             graphics_queue.0,
         )
         .immediate_submit(Box::new(|ctx| TextureManager::new(bindless_descriptor_set, ctx)));
-        let material_manager = MaterialManager::new();
+        let material_manager = SubmitContext::new(
+            device.clone(),
+            allocator.clone(),
+            immediate_fence,
+            immediate_command_buffer,
+            graphics_queue.0,
+        )
+        .immediate_submit(Box::new(|ctx| MaterialManager::new(ctx)));
+
         let camera = camera::Camera::new(window_size.0 as f32, window_size.1 as f32);
 
         info!("Init done.");

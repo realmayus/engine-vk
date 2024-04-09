@@ -352,7 +352,7 @@ impl EguiPipeline {
         &mut self,
         egui_texture_id: EguiTextureId,
         delta: ImageDelta,
-        mut ctx: SubmitContext,
+        ctx: SubmitContext,
         texture_manager: &mut TextureManager,
     ) {
         let data = match &delta.image {

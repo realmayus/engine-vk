@@ -11,9 +11,9 @@ layout (location = 1) in vec2 inUV;
 layout( push_constant ) uniform constants
 {
     mat4 transform;
-SceneDataBuffer sceneDataBuffer;
-VertexBuffer vertexBuffer;
-PbrMaterial pbrMaterial;
+    SceneDataBuffer sceneDataBuffer;
+    VertexBuffer vertexBuffer;
+    PbrMaterial pbrMaterial;
 } PushConstants;
 
 
@@ -26,5 +26,5 @@ layout (location = 0) out vec4 outFragColor;
 void main()
 {
     PbrMaterial material = PushConstants.pbrMaterial;
-    outFragColor = texture(tex[material.texture], inUV);
+    outFragColor = material.albedo * texture(tex[material.texture], inUV);
 }
