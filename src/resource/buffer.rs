@@ -1,5 +1,5 @@
+use crate::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocation, Allocator, LOG_ALLOCATIONS};
-use crate::SubmitContext;
 use ash::vk::DeviceSize;
 use ash::{vk, Device};
 use gpu_alloc_ash::AshMemoryDevice;
@@ -26,10 +26,11 @@ where
             &mut ctx.allocator.borrow_mut(),
             ctx.cmd_buffer,
         );
-        ctx.cleanup = Some(cleanup);
+        ctx.add_cleanup(cleanup);
     }
 }
 
+#[derive(Debug)]
 pub struct AllocatedBuffer {
     pub buffer: vk::Buffer,
     pub(crate) allocation: Allocation,

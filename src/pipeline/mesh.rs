@@ -4,6 +4,7 @@ use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 
+use crate::asset::material::MaterialManager;
 use std::ffi::CStr;
 
 pub struct MeshPipeline {
@@ -15,9 +16,12 @@ pub struct MeshPipeline {
 }
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
-pub(crate) struct PushConstants {
-    pub(crate) scene_data: vk::DeviceAddress,
-    pub(crate) vertex_buffer: vk::DeviceAddress,
+struct PushConstants {
+    transform: [[f32; 4]; 4],
+    scene_data: vk::DeviceAddress,
+    vertex_buffer: vk::DeviceAddress,
+    material_buffer: vk::DeviceAddress,
+    padding: u64,
 }
 
 impl MeshPipeline {
@@ -35,7 +39,7 @@ impl MeshPipeline {
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)
             .size(std::mem::size_of::<PushConstants>() as u32)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)];
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)];
         let binding = [bindless_set_layout];
         let layout_create_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&binding)
@@ -101,11 +105,12 @@ impl MeshPipeline {
         &self,
         device: &Device,
         cmd: vk::CommandBuffer,
-        meshes: &[Mesh],
+        meshes: &[&Mesh],
         target_view: vk::ImageView,
         depth_view: vk::ImageView,
         bindless_descriptor_set: vk::DescriptorSet,
         scene_data: vk::DeviceAddress,
+        material_manager: &MaterialManager,
     ) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(target_view)
@@ -149,11 +154,14 @@ impl MeshPipeline {
                 let push_constants = PushConstants {
                     scene_data,
                     vertex_buffer: mesh.vertex_buffer_address(),
+                    material_buffer: material_manager.get_material(mesh.material).unwrap().buffer_address(device),
+                    transform: (mesh.parent_transform * mesh.transform).to_cols_array_2d(),
+                    padding: 0,
                 };
                 device.cmd_push_constants(
                     cmd,
                     self.layout,
-                    vk::ShaderStageFlags::VERTEX,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
                     bytemuck::cast_slice(&[push_constants]),
                 );

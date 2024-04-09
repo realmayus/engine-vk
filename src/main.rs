@@ -2,6 +2,7 @@ extern crate core;
 
 mod asset;
 mod camera;
+mod commands;
 mod gltf;
 mod pipeline;
 mod resource;
@@ -9,13 +10,18 @@ mod scene;
 mod ui;
 mod util;
 
+use crate::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocator, DescriptorAllocator, PoolSizeRatio};
 use crate::util::{device_discovery, DeletionQueue};
 use ash::khr::swapchain;
 use ash::vk::{DescriptorSet, DescriptorSetLayout};
 use ash::{khr, vk, Device, Instance};
 
+use crate::asset::material::MaterialManager;
+use crate::commands::{Command, CommandHandler};
+use crate::gltf::GltfReader;
 use asset::texture::TextureManager;
+use egui::TextBuffer;
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::device_properties;
 use log::{debug, info};
@@ -27,6 +33,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::mpsc;
 use util::FrameData;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -41,6 +48,8 @@ use crate::pipeline::egui::EguiPipeline;
 use crate::pipeline::grid::GridPipeline;
 use crate::pipeline::mesh::MeshPipeline;
 use crate::scene::mesh::Mesh;
+use crate::scene::world::World;
+use crate::ui::Gui;
 
 const FRAME_OVERLAP: usize = 2;
 
@@ -72,82 +81,139 @@ struct App {
     immediate_command_pool: vk::CommandPool,
     immediate_command_buffer: vk::CommandBuffer,
     depth_image: Option<AllocatedImage>,
-    meshes: Vec<Mesh>,
     scene_data: WrappedBuffer<GpuSceneData>,
-    texture_manager: TextureManager,
+    texture_manager: Rc<RefCell<TextureManager>>,
+    material_manager: Rc<RefCell<MaterialManager>>,
     camera: camera::Camera,
+    world: Rc<RefCell<World>>,
+    settings: AppSettings,
+    gui: Gui,
+    cmd_sender: mpsc::Sender<Command>,
+}
+
+struct AppSettings {
     show_gui: bool,
     show_grid: bool,
 }
 
-struct SubmitContext {
-    device: Rc<Device>,
-    allocator: Rc<RefCell<Allocator>>,
-    fence: vk::Fence,
-    cmd_buffer: vk::CommandBuffer,
-    queue: vk::Queue,
-    cleanup: Option<Box<dyn FnOnce(&Device, &mut Allocator)>>,
-}
+mod immediate_submit {
+    // new module to hide SubmitContext's private fields
+    use crate::resource::Allocator;
+    use crate::App;
+    use ash::{vk, Device};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-type ImmediateSubmitFn<'a, T> = Box<(dyn FnOnce(&mut SubmitContext) -> T + 'a)>;
-
-impl SubmitContext {
-    fn new(app: &App) -> Self {
-        Self {
-            device: app.device.clone(),
-            allocator: app.allocator.clone(),
-            fence: app.immediate_fence,
-            cmd_buffer: app.immediate_command_buffer,
-            queue: app.graphics_queue.0,
-            cleanup: None,
-        }
+    pub struct SubmitContext {
+        pub device: Rc<Device>,
+        pub allocator: Rc<RefCell<Allocator>>,
+        fence: vk::Fence,
+        pub(crate) cmd_buffer: vk::CommandBuffer,
+        queue: vk::Queue,
+        cleanup: Vec<Box<dyn FnOnce(&Device, &mut Allocator)>>,
     }
 
-    fn immediate_submit<T>(&mut self, cmd: ImmediateSubmitFn<T>) -> T {
-        let cmd_buffer = self.cmd_buffer;
-        unsafe {
-            self.device.reset_fences(&[self.fence]).unwrap();
-            self.device
-                .reset_command_buffer(cmd_buffer, vk::CommandBufferResetFlags::empty())
-                .unwrap();
-            let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-            self.device.begin_command_buffer(cmd_buffer, &begin_info).unwrap();
-            let res = cmd(self);
-            self.device.end_command_buffer(cmd_buffer).unwrap();
-            let cmd_buffer_submit = vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer);
-            let cmd_buffer_submits = [cmd_buffer_submit];
-            let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&cmd_buffer_submits);
-            let submits = [submit_info];
-            self.device.queue_submit2(self.queue, &submits, self.fence).unwrap();
-            self.device.wait_for_fences(&[self.fence], true, 1000000000).unwrap();
-            if self.cleanup.is_some() {
-                self.cleanup.take().unwrap()(&self.device, &mut self.allocator.borrow_mut());
+    type ImmediateSubmitFn<'a, T> = Box<(dyn FnOnce(&mut SubmitContext) -> T + 'a)>;
+
+    impl SubmitContext {
+        pub fn new(
+            device: Rc<Device>,
+            allocator: Rc<RefCell<Allocator>>,
+            fence: vk::Fence,
+            cmd_buffer: vk::CommandBuffer,
+            queue: vk::Queue,
+        ) -> Self {
+            Self {
+                device,
+                allocator,
+                fence,
+                cmd_buffer,
+                queue,
+                cleanup: vec![],
             }
+        }
+
+        pub fn from_app(app: &App) -> Self {
+            Self {
+                device: app.device.clone(),
+                allocator: app.allocator.clone(),
+                fence: app.immediate_fence,
+                cmd_buffer: app.immediate_command_buffer,
+                queue: app.graphics_queue.0,
+                cleanup: vec![],
+            }
+        }
+
+        /*
+        Submits all commands to the GPU. Then, all cleanup functions are executed. This consumes the context.
+         */
+        pub fn immediate_submit<T>(mut self, cmd: ImmediateSubmitFn<T>) -> T {
+            let cmd_buffer = self.cmd_buffer;
+            unsafe {
+                self.device.reset_fences(&[self.fence]).unwrap();
+                self.device
+                    .reset_command_buffer(cmd_buffer, vk::CommandBufferResetFlags::empty())
+                    .unwrap();
+                let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+                self.device.begin_command_buffer(cmd_buffer, &begin_info).unwrap();
+                let res = cmd(&mut self);
+                self.device.end_command_buffer(cmd_buffer).unwrap();
+                let cmd_buffer_submit = vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer);
+                let cmd_buffer_submits = [cmd_buffer_submit];
+                let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&cmd_buffer_submits);
+                let submits = [submit_info];
+                self.device.queue_submit2(self.queue, &submits, self.fence).unwrap();
+                self.device.wait_for_fences(&[self.fence], true, 1000000000).unwrap();
+                for cleanup_fn in self.cleanup {
+                    cleanup_fn(&self.device, &mut self.allocator.borrow_mut());
+                }
+                res
+            }
+        }
+
+        /*
+        Allows you to chain multiple submit contexts together. All cleanup functions are propagated to the topmost context and executed when the topmost context is submitted.
+         */
+        pub fn nest<T>(&mut self, f: ImmediateSubmitFn<T>) -> T {
+            let mut ctx = self.clone();
+            let res = f(&mut ctx);
+            self.cleanup.extend(ctx.cleanup);
             res
         }
-    }
-}
 
-impl Clone for SubmitContext {
-    fn clone(&self) -> Self {
-        Self {
-            device: self.device.clone(),
-            allocator: self.allocator.clone(),
-            fence: self.fence,
-            cmd_buffer: self.cmd_buffer,
-            queue: self.queue,
-            cleanup: None,
+        /*
+        Adds a cleanup function to the context. Cleanup functions are executed when the context is submitted.
+         */
+        pub fn add_cleanup(&mut self, cleanup: Box<dyn FnOnce(&Device, &mut Allocator)>) {
+            self.cleanup.push(cleanup);
+        }
+    }
+
+    impl Clone for SubmitContext {
+        /*
+        Note that cloning does not propagate cleanup functions to the topmost context. Use nest for that.
+         */
+        fn clone(&self) -> Self {
+            Self {
+                device: self.device.clone(),
+                allocator: self.allocator.clone(),
+                fence: self.fence,
+                cmd_buffer: self.cmd_buffer,
+                queue: self.queue,
+                cleanup: vec![],
+            }
         }
     }
 }
 
 pub const SWAPCHAIN_IMAGE_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
+pub const DRAW_IMAGE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 pub const API_VERSION: u32 = vk::make_api_version(0, 1, 3, 0);
 
 impl App {
-    fn new(event_loop: &EventLoop<()>) -> Result<Self, Box<dyn Error>> {
-        let window_size = (800, 600);
+    fn new(event_loop: &EventLoop<()>, cmd_sender: mpsc::Sender<Command>) -> Result<Self, Box<dyn Error>> {
+        let window_size = (1500, 850);
         let (instance, surface_khr, surface, entry, window) = unsafe {
             let entry = ash::Entry::load()?;
             let surface_extensions = ash_window::enumerate_required_extensions(event_loop.display_handle()?.as_raw())?;
@@ -212,14 +278,13 @@ impl App {
 
         let device = Rc::new(device);
         let allocator = Rc::new(RefCell::new(allocator));
-        SubmitContext {
-            device: device.clone(),
-            allocator: allocator.clone(),
-            fence: immediate_fence,
-            cmd_buffer: immediate_command_buffer,
-            queue: graphics_queue.0,
-            cleanup: None,
-        }
+        SubmitContext::new(
+            device.clone(),
+            allocator.clone(),
+            immediate_fence,
+            immediate_command_buffer,
+            graphics_queue.0,
+        )
         .immediate_submit(Box::new(|ctx| scene_data_buffer.write(ctx)));
 
         let egui_pipeline = EguiPipeline::new(
@@ -228,26 +293,26 @@ impl App {
             &mut deletion_queue,
             bindless_set_layout,
             &window,
-            SubmitContext {
-                device: device.clone(),
-                allocator: allocator.clone(),
-                fence: immediate_fence,
-                cmd_buffer: immediate_command_buffer,
-                queue: graphics_queue.0,
-                cleanup: None,
-            },
+            SubmitContext::new(
+                device.clone(),
+                allocator.clone(),
+                immediate_fence,
+                immediate_command_buffer,
+                graphics_queue.0,
+            ),
         );
-        let texture_manager = SubmitContext {
-            device: device.clone(),
-            allocator: allocator.clone(),
-            fence: immediate_fence,
-            cmd_buffer: immediate_command_buffer,
-            queue: graphics_queue.0,
-            cleanup: None,
-        }
+        let texture_manager = SubmitContext::new(
+            device.clone(),
+            allocator.clone(),
+            immediate_fence,
+            immediate_command_buffer,
+            graphics_queue.0,
+        )
         .immediate_submit(Box::new(|ctx| TextureManager::new(bindless_descriptor_set, ctx)));
-        info!("Init done.");
+        let material_manager = MaterialManager::new();
         let camera = camera::Camera::new(window_size.0 as f32, window_size.1 as f32);
+
+        info!("Init done.");
 
         Ok(App {
             entry,
@@ -277,12 +342,17 @@ impl App {
             immediate_command_pool,
             immediate_command_buffer,
             immediate_fence,
-            meshes: vec![],
             scene_data: scene_data_buffer,
-            texture_manager,
+            texture_manager: Rc::new(RefCell::new(texture_manager)),
+            material_manager: Rc::new(RefCell::new(material_manager)),
             camera,
-            show_gui: true,
-            show_grid: true,
+            settings: AppSettings {
+                show_gui: true,
+                show_grid: true,
+            },
+            gui: Gui::new(cmd_sender.clone()),
+            world: Rc::new(RefCell::new(World::default())),
+            cmd_sender,
         })
     }
 
@@ -423,11 +493,8 @@ impl App {
                 height: window_size.1,
                 depth: 1,
             },
-            SWAPCHAIN_IMAGE_FORMAT,
-            vk::ImageUsageFlags::TRANSFER_DST
-                | vk::ImageUsageFlags::TRANSFER_SRC
-                // | vk::ImageUsageFlags::STORAGE
-                | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            DRAW_IMAGE_FORMAT,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             AllocUsage::GpuOnly,
             vk::ImageAspectFlags::COLOR,
             vk::ImageCreateFlags::MUTABLE_FORMAT,
@@ -440,7 +507,7 @@ impl App {
                     &vk::ImageViewCreateInfo::default()
                         .image(draw_image.image)
                         .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(vk::Format::B8G8R8A8_UNORM)
+                        .format(vk::Format::R8G8B8A8_UNORM)
                         .components(vk::ComponentMapping {
                             r: vk::ComponentSwizzle::IDENTITY,
                             g: vk::ComponentSwizzle::IDENTITY,
@@ -758,13 +825,14 @@ impl App {
             self.mesh_pipeline.draw(
                 &self.device,
                 cmd_buffer,
-                &self.meshes,
+                &self.world.borrow().get_meshes(),
                 self.draw_image.as_ref().unwrap().view,
                 self.depth_image.as_ref().unwrap().view,
-                self.texture_manager.descriptor_set(),
+                self.texture_manager.borrow().descriptor_set(),
                 self.scene_data.buffer.device_address(&self.device),
+                &self.material_manager.borrow(),
             );
-            if self.show_grid {
+            if self.settings.show_grid {
                 self.grid_pipeline.draw(
                     &self.device,
                     cmd_buffer,
@@ -773,15 +841,23 @@ impl App {
                 );
             }
 
-            if self.show_gui {
-                let ctx = SubmitContext::new(self);
+            if self.settings.show_gui {
+                let ctx = SubmitContext::from_app(self);
                 self.egui_pipeline.begin_frame(&self.window);
 
-                self.gui();
+                self.gui.draw(
+                    self.egui_pipeline.context().clone(),
+                    &mut self.settings,
+                    &mut self.camera,
+                    self.world.clone(),
+                    self.texture_manager.clone(),
+                    self.material_manager.clone(),
+                    ctx.clone(),
+                );
 
                 let output = self.egui_pipeline.end_frame(
                     &self.window,
-                    &mut self.texture_manager,
+                    &mut self.texture_manager.borrow_mut(),
                     &self.device,
                     &mut self.allocator.borrow_mut(),
                 );
@@ -789,15 +865,15 @@ impl App {
                     .egui_pipeline
                     .context()
                     .tessellate(output.shapes, self.window.scale_factor() as f32);
-
+                let descriptor_set = self.texture_manager.borrow().descriptor_set();
                 self.egui_pipeline.draw(
                     &self.device,
                     cmd_buffer,
                     self.unorm_draw_image_view,
-                    self.texture_manager.descriptor_set(),
+                    descriptor_set,
                     output.textures_delta,
                     meshes,
-                    &mut self.texture_manager,
+                    &mut self.texture_manager.borrow_mut(),
                     ctx,
                     (self.current_frame % FRAME_OVERLAP as u32) as usize,
                 );
@@ -918,8 +994,11 @@ impl App {
                     ..
                 } => {
                     if *key_code == KeyCode::F10 {
-                        self.show_gui = !self.show_gui;
+                        self.settings.show_gui = !self.settings.show_gui;
                     }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    self.camera.on_mouse_scroll(*delta);
                 }
                 _ => {}
             }
@@ -930,9 +1009,6 @@ impl App {
         match event {
             winit::event::DeviceEvent::MouseMotion { delta } => {
                 self.camera.on_mouse_move((delta.0 as f32, delta.1 as f32));
-            }
-            winit::event::DeviceEvent::MouseWheel { delta } => {
-                self.camera.on_mouse_scroll(*delta);
             }
             _ => {}
         }
@@ -948,48 +1024,8 @@ impl App {
             self.scene_data.data.proj = proj.to_cols_array_2d();
             self.scene_data.data.unproj = (view.inverse() * self.camera.proj().inverse()).to_cols_array_2d();
             self.scene_data.data.viewproj = viewproj.to_cols_array_2d();
-            SubmitContext {
-                device: self.device.clone(),
-                allocator: self.allocator.clone(),
-                fence: self.immediate_fence,
-                cmd_buffer: self.immediate_command_buffer,
-                queue: self.graphics_queue.0,
-                cleanup: None,
-            }
-            .immediate_submit(Box::new(|ctx| self.scene_data.write(ctx)));
+            SubmitContext::from_app(self).immediate_submit(Box::new(|ctx| self.scene_data.write(ctx)));
         }
-    }
-
-    fn gui(&mut self) {
-        let egui_ctx = self.egui_pipeline.context();
-        egui_ctx.style_mut(|style| {
-            style.visuals.window_shadow = egui::epaint::Shadow::NONE;
-        });
-        egui::Window::new("Hello world!").show(egui_ctx, |ui| {
-            ui.checkbox(&mut self.show_grid, "Show grid");
-
-            observe!(
-                self.camera.fov,
-                {
-                    ui.add(egui::Slider::new(&mut self.camera.fov, 0.0..=180.0).text("FOV"));
-                },
-                |_v| {
-                    self.camera.dirty = true;
-                }
-            );
-
-            observe!(
-                self.camera.position,
-                {
-                    ui.add(egui::Slider::new(&mut self.camera.position.x, -5.0..=5.0).text("X"));
-                    ui.add(egui::Slider::new(&mut self.camera.position.y, -5.0..=5.0).text("Y"));
-                    ui.add(egui::Slider::new(&mut self.camera.position.z, -5.0..=5.0).text("Z"));
-                },
-                |_v| {
-                    self.camera.dirty = true;
-                }
-            );
-        });
     }
 }
 
@@ -999,9 +1035,7 @@ impl Drop for App {
             self.device.device_wait_idle().unwrap();
             self.main_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
             self.device.destroy_descriptor_pool(self.bindless_descriptor_pool, None);
-            for mut mesh in self.meshes.drain(..) {
-                mesh.destroy(&self.device, &mut self.allocator.borrow_mut());
-            }
+            self.world.borrow_mut().destroy(&self.device, &mut self.allocator.borrow_mut());
 
             self.device.destroy_image_view(self.unorm_draw_image_view, None);
             self.draw_image
@@ -1012,7 +1046,9 @@ impl Drop for App {
                 .take()
                 .unwrap()
                 .destroy(&self.device, &mut self.allocator.borrow_mut());
-            self.texture_manager.destroy(&self.device, &mut self.allocator.borrow_mut());
+            self.texture_manager
+                .borrow_mut()
+                .destroy(&self.device, &mut self.allocator.borrow_mut());
             for frame in self.frames.iter_mut() {
                 frame.deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut()); // take care of frames that were prepared but not reached in the render loop yet
                 for buffer in frame.stale_buffers.drain(..) {
@@ -1037,18 +1073,12 @@ impl Drop for App {
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let event_loop = EventLoop::new();
-
-    let mut app = App::new(event_loop.as_ref().unwrap())?;
-    let models = gltf::load_gltf(Path::new("../assets/cube_light_tan.glb"));
-    let meshes = models.into_iter().flat_map(|mo| mo.meshes).collect::<Vec<_>>();
-    info!("Loaded gltf with {} meshes", meshes.len());
-
-    for mut mesh in meshes {
-        let mut submit_ctx = SubmitContext::new(&app);
-        submit_ctx.immediate_submit(Box::new(|ctx| mesh.upload(ctx)));
-
-        app.meshes.push(mesh);
-    }
+    let cmd_channel = mpsc::channel();
+    let mut app = App::new(event_loop.as_ref().unwrap(), cmd_channel.0)?;
+    let cmd_handler = CommandHandler::new(cmd_channel.1);
+    let ctx = SubmitContext::from_app(&app);
+    let mut gltf_loader = GltfReader::new(app.world.clone(), app.texture_manager.clone(), app.material_manager.clone());
+    gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
 
     Ok(event_loop.unwrap().run(move |event, target| match event {
         Event::WindowEvent {
@@ -1057,6 +1087,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         } => {
             app.update();
             app.draw();
+            cmd_handler.handle_command(&mut app);
             app.window.request_redraw();
         }
         Event::WindowEvent {

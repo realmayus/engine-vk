@@ -1,32 +1,40 @@
+use crate::immediate_submit::SubmitContext;
 use crate::resource::image::AllocatedImage;
 use crate::resource::{update_set, AllocUsage, Allocator, DescriptorImageWriteInfo};
-use crate::SubmitContext;
 use ash::{vk, Device};
 use log::info;
 use std::mem;
 
 pub type SamplerId = usize;
-pub type TextureId = usize;
+pub type TextureId = u32;
 
 #[derive(Debug)]
 pub struct Texture {
     pub id: TextureId,
     pub image: AllocatedImage,
-    sampler: SamplerId, // rust doesn't like self-referential structs (samplers also live in TextureManager)
+    pub sampler: SamplerId,
+    pub data: Vec<u8>,
 }
-
+pub const TEXTURE_IMAGE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 impl Texture {
-    pub fn new(sampler: SamplerId, ctx: &mut SubmitContext, label: Option<String>, data: &[u8], extent: vk::Extent3D) -> Self {
+    pub fn new(
+        sampler: SamplerId,
+        format: vk::Format,
+        ctx: &mut SubmitContext,
+        label: Option<String>,
+        data: &[u8],
+        extent: vk::Extent3D,
+    ) -> Self {
         let img = AllocatedImage::new(
             &ctx.device,
             &mut ctx.allocator.borrow_mut(),
             extent,
-            vk::Format::B8G8R8A8_SRGB,
+            format,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             AllocUsage::GpuOnly,
             vk::ImageAspectFlags::COLOR,
             vk::ImageCreateFlags::empty(),
-            label,
+            label.clone(),
         );
 
         img.write(data, ctx);
@@ -35,6 +43,7 @@ impl Texture {
             image: img,
             id: 0,
             sampler,
+            data: Vec::from(data.clone()),
         }
     }
 
@@ -43,7 +52,7 @@ impl Texture {
             &ctx.device,
             &mut ctx.allocator.borrow_mut(),
             extent,
-            vk::Format::B8G8R8A8_SRGB,
+            TEXTURE_IMAGE_FORMAT,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             AllocUsage::GpuOnly,
             vk::ImageAspectFlags::COLOR,
@@ -111,88 +120,95 @@ impl TextureManager {
         );
         let pixel_data = pixels.iter().flat_map(|p| p.iter().copied()).collect::<Vec<_>>();
 
-        Self::add_texture(
-            &mut manager,
-            Texture::new(
-                Self::DEFAULT_SAMPLER_NEAREST,
-                ctx,
-                Some("White".into()),
-                &white,
-                vk::Extent3D {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                },
-            ),
-            &ctx.device,
-            false,
-        );
-        let cleanup1 = ctx.cleanup.take().unwrap();
-        Self::add_texture(
-            &mut manager,
-            Texture::new(
-                Self::DEFAULT_SAMPLER_NEAREST,
-                ctx,
-                Some("Black".into()),
-                &black,
-                vk::Extent3D {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                },
-            ),
-            &ctx.device,
-            false,
-        );
-        let cleanup2 = ctx.cleanup.take().unwrap();
-        Self::add_texture(
-            &mut manager,
-            Texture::new(
-                Self::DEFAULT_SAMPLER_NEAREST,
-                ctx,
-                Some("Checkerboard".into()),
-                &pixel_data,
-                vk::Extent3D {
-                    width: 16,
-                    height: 16,
-                    depth: 1,
-                },
-            ),
-            &ctx.device,
-            true,
-        );
-        let cleanup3 = ctx.cleanup.take().unwrap();
-
-        ctx.cleanup = Some(Box::from(move |device: &Device, allocator: &mut Allocator| {
-            cleanup1(device, allocator);
-            cleanup2(device, allocator);
-            cleanup3(device, allocator);
+        ctx.nest(Box::new(|ctx| {
+            Self::add_texture(
+                &mut manager,
+                Texture::new(
+                    Self::DEFAULT_SAMPLER_NEAREST,
+                    TEXTURE_IMAGE_FORMAT,
+                    ctx,
+                    Some("White".into()),
+                    &white,
+                    vk::Extent3D {
+                        width: 1,
+                        height: 1,
+                        depth: 1,
+                    },
+                ),
+                &ctx.device,
+                false,
+            );
         }));
-
+        ctx.nest(Box::new(|ctx| {
+            Self::add_texture(
+                &mut manager,
+                Texture::new(
+                    Self::DEFAULT_SAMPLER_NEAREST,
+                    TEXTURE_IMAGE_FORMAT,
+                    ctx,
+                    Some("Black".into()),
+                    &black,
+                    vk::Extent3D {
+                        width: 1,
+                        height: 1,
+                        depth: 1,
+                    },
+                ),
+                &ctx.device,
+                false,
+            );
+        }));
+        ctx.nest(Box::new(|ctx| {
+            Self::add_texture(
+                &mut manager,
+                Texture::new(
+                    Self::DEFAULT_SAMPLER_NEAREST,
+                    TEXTURE_IMAGE_FORMAT,
+                    ctx,
+                    Some("Checkerboard".into()),
+                    &pixel_data,
+                    vk::Extent3D {
+                        width: 16,
+                        height: 16,
+                        depth: 1,
+                    },
+                ),
+                &ctx.device,
+                true,
+            );
+        }));
         manager
     }
 
     pub fn free(&mut self, to_free: TextureId, device: &Device, allocator: &mut Allocator) {
-        let texture = self.textures[to_free].take().unwrap();
+        let texture = self.textures[to_free as usize].take().unwrap();
         texture.image.destroy(device, allocator);
         info!("Freed texture {:?}", to_free);
     }
 
     pub fn next_free_id(&self) -> TextureId {
-        self.textures.iter().position(|t| t.is_none()).unwrap_or(self.textures.len())
+        self.textures
+            .iter()
+            .position(|t| t.is_none())
+            .unwrap_or(self.textures.len() as usize) as TextureId
     }
 
     pub fn descriptor_set(&self) -> vk::DescriptorSet {
         self.descriptor_set
     }
 
+    pub fn iter_textures(&self) -> impl Iterator<Item = &Texture> {
+        //only iter over textures that are Some
+        self.textures.iter().filter_map(|t| t.as_ref())
+    }
+
     pub fn add_texture(&mut self, mut texture: Texture, device: &Device, update_set: bool) -> TextureId {
         let id = self.next_free_id();
         texture.id = id;
-        if id == self.textures.len() {
+        if id as usize == self.textures.len() {
             self.textures.push(Some(texture));
         } else {
-            self.textures[id] = Some(texture);
+            self.textures[id as usize] = Some(texture);
         }
 
         if update_set {
@@ -227,7 +243,7 @@ impl TextureManager {
     }
 
     pub fn texture_mut(&mut self, id: TextureId) -> &mut Texture {
-        self.textures[id].as_mut().unwrap()
+        self.textures[id as usize].as_mut().unwrap()
     }
 
     pub fn destroy(&mut self, device: &Device, allocator: &mut Allocator) {

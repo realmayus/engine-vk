@@ -220,6 +220,12 @@ pub fn load_shader_module(device: &Device, code: &[u8]) -> Result<vk::ShaderModu
     unsafe { Ok(device.create_shader_module(&info, None)?) }
 }
 
+pub fn size_image(width: usize, height: usize, required_width: usize) -> (usize, usize) {
+    let aspect = width as f32 / height as f32;
+    let new_height = required_width as f32 / aspect;
+    (required_width, new_height as usize)
+}
+
 #[macro_export]
 macro_rules! frame {
     ($m: ident) => {

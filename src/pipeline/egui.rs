@@ -1,15 +1,16 @@
+use crate::asset::texture::TEXTURE_IMAGE_FORMAT;
 use crate::pipeline::PipelineBuilder;
 use crate::resource::{AllocUsage, Allocator};
 use crate::util::{load_shader_module, DeletionQueue};
-use crate::{SubmitContext, FRAME_OVERLAP};
+use crate::{immediate_submit::SubmitContext, FRAME_OVERLAP};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
-use egui::ahash::{HashMap, HashMapExt};
 use egui::epaint::{ImageDelta, Primitive};
 use egui::{Context, FullOutput, ImageData, TexturesDelta};
 
 use crate::asset::texture::{Texture, TextureId, TextureManager};
 use crate::resource::buffer::AllocatedBuffer;
+use hashbrown::HashMap;
 use log::debug;
 use std::ffi::CStr;
 use winit::window::Window;
@@ -337,8 +338,10 @@ impl EguiPipeline {
     ) -> FullOutput {
         let output = self.context.end_frame();
         for to_free in &output.textures_delta.free {
-            let texture_id = self.textures.remove(to_free);
-            texture_manager.free(texture_id.unwrap(), device, allocator);
+            if self.textures.get(to_free).is_some() {
+                let texture_id = self.textures.remove(to_free);
+                texture_manager.free(texture_id.unwrap(), device, allocator);
+            }
         }
         self.egui_winit.handle_platform_output(window, output.platform_output.clone());
         output
@@ -372,6 +375,7 @@ impl EguiPipeline {
                 debug!("Adding egui texture");
                 let texture = Texture::new(
                     TextureManager::DEFAULT_SAMPLER_NEAREST,
+                    TEXTURE_IMAGE_FORMAT,
                     ctx,
                     Some(format!("egui texture, id: {:?}", egui_texture_id)),
                     data.as_slice(),

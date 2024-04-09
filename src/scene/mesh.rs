@@ -1,9 +1,10 @@
+use crate::asset::material::MaterialId;
+use crate::immediate_submit::SubmitContext;
 use crate::pipeline::Vertex;
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::{AllocUsage, Allocator};
-use crate::SubmitContext;
 use ash::{vk, Device};
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use gpu_alloc_ash::AshMemoryDevice;
 
 pub struct GpuMesh {
@@ -14,11 +15,14 @@ pub struct GpuMesh {
 
 #[derive(Default)]
 pub struct Mesh {
-    pub(crate) mem: Option<GpuMesh>,
-    pub(crate) vertices: Vec<Vec3>,
-    pub(crate) indices: Vec<u32>,
-    pub(crate) normals: Vec<Vec3>,
-    pub(crate) uvs: Vec<Vec2>,
+    pub mem: Option<GpuMesh>,
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<u32>,
+    pub normals: Vec<Vec3>,
+    pub uvs: Vec<Vec2>,
+    pub material: MaterialId,
+    pub transform: Mat4,
+    pub parent_transform: Mat4,
 }
 
 impl Mesh {
@@ -113,7 +117,7 @@ impl Mesh {
             index_buffer,
         });
 
-        ctx.cleanup = Some(Box::from(move |device: &Device, allocator: &mut Allocator| {
+        ctx.add_cleanup(Box::from(move |device: &Device, allocator: &mut Allocator| {
             staging.destroy(device, allocator);
         }));
     }

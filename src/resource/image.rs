@@ -1,7 +1,7 @@
+use crate::immediate_submit::SubmitContext;
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::{AllocUsage, Allocation, Allocator, LOG_ALLOCATIONS};
 use crate::util::transition_image;
-use crate::SubmitContext;
 use ash::vk::DeviceSize;
 use ash::{vk, Device};
 use gpu_alloc_ash::AshMemoryDevice;
@@ -11,10 +11,10 @@ use log::debug;
 pub struct AllocatedImage {
     pub image: vk::Image,
     pub view: vk::ImageView,
-    allocation: Allocation,
+    pub allocation: Allocation,
     pub extent: vk::Extent3D,
-    format: vk::Format,
-    label: Option<String>,
+    pub format: vk::Format,
+    pub label: Option<String>,
 }
 
 impl AllocatedImage {
@@ -150,9 +150,9 @@ impl AllocatedImage {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
-        ctx.cleanup = Some(Box::from(|device: &Device, allocator: &mut Allocator| {
+        ctx.add_cleanup(Box::from(|device: &Device, allocator: &mut Allocator| {
             staging.destroy(device, allocator);
-        }))
+        }));
     }
 
     pub(crate) fn destroy(self, device: &Device, allocator: &mut Allocator) {

@@ -74,7 +74,7 @@ impl Camera {
     pub fn on_mouse_scroll(&mut self, delta: MouseScrollDelta) {
         match delta {
             MouseScrollDelta::LineDelta(_, y) => {
-                let y = -y * 0.01;
+                let y = -y;
                 let view_dir = (self.target - self.position).normalize();
                 let new_pos = self.position + view_dir * y;
                 if new_pos.distance(self.target) > 0.1 {
