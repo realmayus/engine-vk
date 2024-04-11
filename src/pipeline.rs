@@ -103,6 +103,7 @@ pub struct GpuSceneData {
     pub viewproj: [[f32; 4]; 4],
     pub unproj: [[f32; 4]; 4],
     pub ambient_color: [f32; 4],
-    pub sun_dir: [f32; 4],
-    pub sun_color: [f32; 4],
+    pub camera_position: [f32; 4],
+    pub light_count: u32,
+    pub padding: [u32; 3],
 }

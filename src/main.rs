@@ -47,6 +47,7 @@ use crate::pipeline::egui::EguiPipeline;
 use crate::pipeline::grid::GridPipeline;
 use crate::pipeline::mesh::MeshPipeline;
 
+use crate::scene::light::LightManager;
 use crate::scene::world::World;
 use crate::ui::Gui;
 
@@ -83,6 +84,7 @@ struct App {
     scene_data: WrappedBuffer<GpuSceneData>,
     texture_manager: Rc<RefCell<TextureManager>>,
     material_manager: Rc<RefCell<MaterialManager>>,
+    light_manager: Rc<RefCell<LightManager>>,
     camera: camera::Camera,
     world: Rc<RefCell<World>>,
     settings: AppSettings,
@@ -146,10 +148,11 @@ impl App {
         let grid_pipeline = GridPipeline::new(&device, window_size, &mut deletion_queue);
         let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
         let mut scene_data_buffer = WrappedBuffer {
+            dirty: false,
             buffer: AllocatedBuffer::new(
                 &device,
                 &mut allocator,
-                vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
                 AllocUsage::GpuOnly,
                 std::mem::size_of::<GpuSceneData>() as vk::DeviceSize,
                 Some("Scene Data Buffer".into()),
@@ -160,8 +163,9 @@ impl App {
                 viewproj: Default::default(),
                 unproj: Default::default(),
                 ambient_color: Default::default(),
-                sun_dir: Default::default(),
-                sun_color: Default::default(),
+                camera_position: Default::default(),
+                light_count: 0,
+                padding: Default::default(),
             },
         };
 
@@ -207,6 +211,8 @@ impl App {
         )
         .immediate_submit(Box::new(|ctx| MaterialManager::new(ctx)));
 
+        let light_manager = LightManager::new(&device, &mut allocator.borrow_mut());
+
         let camera = camera::Camera::new(window_size.0 as f32, window_size.1 as f32);
 
         info!("Init done.");
@@ -242,6 +248,7 @@ impl App {
             scene_data: scene_data_buffer,
             texture_manager: Rc::new(RefCell::new(texture_manager)),
             material_manager: Rc::new(RefCell::new(material_manager)),
+            light_manager: Rc::new(RefCell::new(light_manager)),
             camera,
             settings: AppSettings {
                 show_gui: true,
@@ -728,6 +735,7 @@ impl App {
                 self.texture_manager.borrow().descriptor_set(),
                 self.scene_data.buffer.device_address(&self.device),
                 &self.material_manager.borrow(),
+                &self.light_manager.borrow(),
             );
             if self.settings.show_grid {
                 self.grid_pipeline.draw(
@@ -749,6 +757,7 @@ impl App {
                     self.world.clone(),
                     self.texture_manager.clone(),
                     self.material_manager.clone(),
+                    self.light_manager.clone(),
                     ctx.clone(),
                 );
 
@@ -921,6 +930,14 @@ impl App {
             self.scene_data.data.proj = proj.to_cols_array_2d();
             self.scene_data.data.unproj = (view.inverse() * self.camera.proj().inverse()).to_cols_array_2d();
             self.scene_data.data.viewproj = viewproj.to_cols_array_2d();
+            self.scene_data.dirty = true;
+        }
+        if self.light_manager.borrow().count_dirty {
+            self.light_manager.borrow_mut().count_dirty = false;
+            self.scene_data.data.light_count = self.light_manager.borrow().count() as u32;
+            self.scene_data.dirty = true;
+        }
+        if self.scene_data.dirty {
             SubmitContext::from_app(self).immediate_submit(Box::new(|ctx| self.scene_data.write(ctx)));
         }
     }
@@ -974,7 +991,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new(event_loop.as_ref().unwrap(), cmd_channel.0)?;
     let cmd_handler = CommandHandler::new(cmd_channel.1);
     let ctx = SubmitContext::from_app(&app);
-    let mut gltf_loader = GltfReader::new(app.world.clone(), app.texture_manager.clone(), app.material_manager.clone());
+    let mut gltf_loader = GltfReader::new(
+        app.world.clone(),
+        app.texture_manager.clone(),
+        app.material_manager.clone(),
+        app.light_manager.clone(),
+    );
     gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
 
     Ok(event_loop.unwrap().run(move |event, target| match event {

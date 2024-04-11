@@ -22,7 +22,7 @@ log = "0.4.21"
 env_logger = "0.11.3"
 bytemuck = { version = "1.15.0" , features = ["derive"]}
 glam = "0.27.0"
-gltf = { git = "https://github.com/realmayus/gltf.git" }
+gltf = { git = "https://github.com/realmayus/gltf.git", features = ["KHR_lights_punctual"] }
 egui-winit = "0.27.2"
 egui = "0.27.2"
 hashbrown = "0.14.3"

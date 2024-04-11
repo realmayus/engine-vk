@@ -3,12 +3,15 @@ use crate::asset::material::{Material, MaterialId, PbrMaterial, RawMaterial};
 use crate::asset::texture::{Texture, TextureManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::Allocator;
+use crate::scene::light::{Light, LightManager, LightMeta};
 use crate::scene::mesh::Mesh;
 use crate::scene::model::{Model, ModelId};
 use crate::scene::world::World;
 use ash::{vk, Device};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
+use gltf::khr_lights_punctual::Kind;
 use hashbrown::HashMap;
+use log::info;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -17,7 +20,7 @@ pub struct GltfReader {
     world: Rc<RefCell<World>>,
     texture_manager: Rc<RefCell<TextureManager>>,
     material_manager: Rc<RefCell<MaterialManager>>,
-    cleanups: Vec<Box<dyn FnOnce(&Device, &mut Allocator)>>,
+    light_manager: Rc<RefCell<LightManager>>,
     material_mappings: HashMap<usize, MaterialId>,
 }
 
@@ -32,12 +35,13 @@ impl GltfReader {
         world: Rc<RefCell<World>>,
         texture_manager: Rc<RefCell<TextureManager>>,
         material_manager: Rc<RefCell<MaterialManager>>,
+        light_manager: Rc<RefCell<LightManager>>,
     ) -> Self {
         Self {
             world,
             texture_manager,
             material_manager,
-            cleanups: Vec::new(),
+            light_manager,
             material_mappings: HashMap::new(),
         }
     }
@@ -63,11 +67,20 @@ impl GltfReader {
             for node in gltf.nodes() {
                 let model = mapping.get(&node.index()).unwrap();
                 for child in node.children() {
-                    self.world.borrow_mut().models[*model]
+                    self.world
+                        .borrow_mut()
+                        .models
+                        .get_mut(model)
+                        .unwrap()
                         .children
                         .push(*mapping.get(&child.index()).unwrap());
                 }
-                self.world.borrow_mut().update_transforms(*model, Mat4::IDENTITY);
+            }
+            let models = self.world.borrow_mut().get_toplevel_model_ids().clone();
+            for model in models {
+                self.world
+                    .borrow_mut()
+                    .update_transforms(model, Mat4::IDENTITY, &mut self.light_manager.borrow_mut(), ctx);
             }
         }));
         self.texture_manager.borrow_mut().update_set(&device);
@@ -81,11 +94,47 @@ impl GltfReader {
         ctx: &mut SubmitContext,
         parent_transform: Mat4,
     ) -> ModelId {
+        let node_transform = Mat4::from_cols_array_2d(&node.transform().matrix());
         let mut model = Model {
             label: node.name().map(|x| x.to_string()),
+            transform: node_transform,
             ..Default::default()
         };
-        let node_transform = Mat4::from_cols_array_2d(&node.transform().matrix());
+
+        if let Some(light) = node.light() {
+            info!("Node has a light!");
+            match light.kind() {
+                Kind::Directional => {
+                    info!("Directional light");
+                }
+                Kind::Point => {
+                    info!("Point light");
+                }
+                Kind::Spot {
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => {
+                    info!("Spot light");
+                    // get the direction of the spotlight by applying node_transform:
+                    let dir = (-Vec4::Y).normalize(); // todo check this
+
+                    let light = Light::new_spotlight(
+                        node_transform.w_axis.xyz(),
+                        [1.0, 1.0, 1.0],
+                        60.0f32.to_radians(),
+                        (1000.0, 1000.0),
+                        dir.xyz(),
+                        light.intensity(),
+                    );
+                    let light = self.light_manager.borrow_mut().add_light(light, ctx);
+                    model.light = Some(light);
+                }
+            }
+        }
+
+        if node.name().map(|x| x.starts_with("LightStrip")).unwrap_or(false) {
+            println!("{:#?}", node_transform);
+        }
         for mesh in node.mesh().iter() {
             for primitive in mesh.primitives() {
                 let mut vertices = Vec::new();
@@ -129,8 +178,7 @@ impl GltfReader {
                     normals,
                     uvs,
                     material: material_id,
-                    parent_transform,
-                    transform: parent_transform * node_transform,
+                    transform: parent_transform,
                 };
                 ctx.nest(Box::new(|ctx| {
                     mesh.upload(ctx);

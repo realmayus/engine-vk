@@ -24,7 +24,7 @@ impl Material {
         let mut buffer = AllocatedBuffer::new(
             &ctx.device,
             &mut ctx.allocator.borrow_mut(),
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             AllocUsage::GpuOnly,
             size as vk::DeviceSize,
             label.clone(),
@@ -44,7 +44,7 @@ impl Material {
         }
     }
 
-    pub fn buffer_address(&self, device: &Device) -> vk::DeviceAddress {
+    pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
         self.buffer.device_address(device)
     }
 }

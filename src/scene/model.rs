@@ -1,4 +1,5 @@
 use crate::resource::Allocator;
+use crate::scene::light::LightId;
 use crate::scene::mesh::Mesh;
 use ash::Device;
 use glam::Mat4;
@@ -12,6 +13,7 @@ pub struct Model {
     pub children: Vec<ModelId>,
     pub label: Option<String>,
     pub transform: Mat4,
+    pub light: Option<LightId>,
 }
 
 impl Model {

@@ -4,13 +4,16 @@ use crate::camera::Camera;
 use crate::commands::Command;
 use crate::observe;
 use crate::resource::immediate_submit::SubmitContext;
+use crate::scene::light::{LightManager, LightMeta};
 use crate::scene::model::ModelId;
 use crate::AppSettings;
 use crate::TextureManager;
 use crate::World;
 use crate::{util, MaterialManager};
 use egui::{RichText, TextBuffer, TextureFilter};
+use glam::{Mat4, Vec3, Vec4, Vec4Swizzles};
 use std::cell::RefCell;
+use std::ops::Mul;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -86,7 +89,8 @@ impl Gui {
         world: Rc<RefCell<World>>,
         texture_manager: Rc<RefCell<TextureManager>>,
         material_manager: Rc<RefCell<MaterialManager>>,
-        _submit_context: SubmitContext,
+        light_manager: Rc<RefCell<LightManager>>,
+        mut _submit_context: SubmitContext,
     ) {
         ctx.style_mut(|style| {
             style.visuals.window_shadow = egui::epaint::Shadow::NONE;
@@ -140,7 +144,68 @@ impl Gui {
             ui.label("Models");
             let models = world.borrow().get_toplevel_model_ids();
             for model in models {
-                self.model_div(ui, model, &mut world.borrow_mut())
+                self.model_div(
+                    ui,
+                    model,
+                    &mut world.borrow_mut(),
+                    &mut light_manager.borrow_mut(),
+                    _submit_context.clone(),
+                );
+            }
+            let lights = light_manager.borrow().keys();
+            for light_id in lights {
+                ui.collapsing(format!("Light {}", light_id), |ui| {
+                    let mgr = light_manager.borrow();
+                    let light = mgr.get_light(light_id).unwrap();
+                    ui.label(format!("Type: {:?}", if light.data.ty == 0 { "Spot" } else { "Point" }));
+                    ui.label(format!("Color: {:?}", light.data.color));
+                    ui.label(format!("Intensity: {:?}", light.data.intensity));
+                    ui.label(format!("Position: {:?}", light.data.position));
+                    ui.label(format!("Direction: {:?}", light.data.direction));
+                    ui.label(format!(
+                        "Cutoff: {:?} / {}°",
+                        light.data.cutoff_angle,
+                        light.data.cutoff_angle.to_degrees()
+                    ));
+                    let mut cutoff = light.data.cutoff_angle.to_degrees();
+                    let mut intensity = light.data.intensity;
+                    let mut dir = light.data.direction;
+                    drop(mgr);
+                    observe!(
+                        (cutoff, intensity, dir),
+                        {
+                            ui.add(egui::Slider::new(&mut cutoff, 0.0..=360.0).text("Cutoff"));
+                            ui.add(egui::Slider::new(&mut intensity, 0.0..=50000.0).text("Intensity"));
+                            ui.add(egui::Slider::new(&mut dir[0], -2.0..=2.0).text("Dir X"));
+                            ui.add(egui::Slider::new(&mut dir[1], -2.0..=2.0).text("Dir Y"));
+                            ui.add(egui::Slider::new(&mut dir[2], -2.0..=2.0).text("Dir Z"));
+                            ui.add(egui::Slider::new(&mut dir[3], 0.0..=1.0).text("Dir W"));
+                        },
+                        |v| {
+                            _submit_context.clone().immediate_submit(Box::new(|ctx| {
+                                light_manager.borrow_mut().update_light(
+                                    light_id,
+                                    |light| {
+                                        light.cutoff_angle = v.0.to_radians();
+                                        light.intensity = v.1;
+                                        light.direction = dir;
+                                        // light.position = camera.view().mul(camera.proj()).transform_point3(Vec4::from(light.position).xyz()).extend(1.0).to_array();
+                                    },
+                                    ctx,
+                                );
+                            }));
+                        }
+                    );
+                    let mgr = light_manager.borrow();
+                    let light = mgr.get_light(light_id).unwrap();
+                    match light.meta {
+                        LightMeta::Spotlight { fov, extent } => {
+                            ui.label(format!("FOV: {}", fov.to_degrees()));
+                            ui.label(format!("Extent: {:?}", extent));
+                        }
+                        LightMeta::Pointlight => {}
+                    }
+                });
             }
         });
 
@@ -192,9 +257,9 @@ impl Gui {
             }
         });
     }
-    fn model_div(&self, ui: &mut egui::Ui, model: ModelId, world: &mut World) {
+    fn model_div(&self, ui: &mut egui::Ui, model: ModelId, world: &mut World, light_manager: &mut LightManager, ctx: SubmitContext) {
         let model_name = {
-            let model = &world.models[model];
+            let model = &world.models[&model];
             let model_name = format!("Untitled ({})", model.id);
             model
                 .label
@@ -204,40 +269,49 @@ impl Gui {
         };
 
         ui.collapsing(model_name, |ui| {
+            ui.menu_button("Actions", |ui| {
+                if ui.button("Delete").clicked() {
+                    self.cmd_sender.send(Command::DeleteModel(model)).unwrap();
+                }
+            });
             observe!(
-                world.models[model].transform.w_axis,
+                world.models[&model].transform.w_axis,
                 {
                     ui.horizontal(|ui| {
                         ui.label("Position");
                         ui.add(
-                            egui::DragValue::new(&mut world.models[model].transform.w_axis.x)
+                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.x)
                                 .speed(0.01)
                                 .prefix("X: "),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut world.models[model].transform.w_axis.y)
+                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.y)
                                 .speed(0.01)
                                 .prefix("Y: "),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut world.models[model].transform.w_axis.z)
+                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.z)
                                 .speed(0.01)
                                 .prefix("Z: "),
                         );
                     });
                 },
                 |_v| {
-                    world.update_transforms(model, glam::Mat4::IDENTITY);
+                    ctx.clone().immediate_submit(Box::new(|ctx| {
+                        world.update_transforms(model, glam::Mat4::IDENTITY, light_manager, ctx)
+                    }));
                 }
             );
             ui.label("Meshes");
-            let model = &world.models[model];
+            let model = &world.models[&model];
+            let light = model.light.clone();
             for (i, mesh) in model.meshes.iter().enumerate() {
                 self.mesh_div(ui, mesh, format!("Mesh {}", i));
             }
             for child in model.children.clone().as_slice() {
-                self.model_div(ui, *child, world);
+                self.model_div(ui, *child, world, light_manager, ctx.clone());
             }
+            ui.label(format!("Light: {:?}", light));
         });
     }
 

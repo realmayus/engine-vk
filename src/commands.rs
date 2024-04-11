@@ -1,4 +1,5 @@
 use crate::resource::immediate_submit::SubmitContext;
+use crate::scene::model::ModelId;
 use crate::App;
 use ash::vk;
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use std::sync::mpsc;
 pub enum Command {
     LoadScene(PathBuf),
     ImportModel(PathBuf),
+    DeleteModel(ModelId),
 }
 
 pub struct CommandHandler {
@@ -30,16 +32,36 @@ impl CommandHandler {
                         }
                     }
                     app.world.borrow_mut().clear(&app.device, &mut app.allocator.borrow_mut());
-                    let mut reader =
-                        crate::gltf::GltfReader::new(app.world.clone(), app.texture_manager.clone(), app.material_manager.clone());
+                    let mut reader = crate::gltf::GltfReader::new(
+                        app.world.clone(),
+                        app.texture_manager.clone(),
+                        app.material_manager.clone(),
+                        app.light_manager.clone(),
+                    );
                     let ctx = SubmitContext::from_app(app);
                     reader.load(&path, ctx);
                 }
                 Command::ImportModel(path) => {
-                    let mut reader =
-                        crate::gltf::GltfReader::new(app.world.clone(), app.texture_manager.clone(), app.material_manager.clone());
+                    let mut reader = crate::gltf::GltfReader::new(
+                        app.world.clone(),
+                        app.texture_manager.clone(),
+                        app.material_manager.clone(),
+                        app.light_manager.clone(),
+                    );
                     let ctx = SubmitContext::from_app(app);
                     reader.load(&path, ctx);
+                }
+                Command::DeleteModel(id) => {
+                    println!("Delete model: {:?}", id);
+                    unsafe {
+                        app.device.device_wait_idle().unwrap();
+                        for frame in app.frames.as_mut_slice() {
+                            app.device
+                                .reset_command_buffer(frame.command_buffer, vk::CommandBufferResetFlags::empty())
+                                .unwrap();
+                        }
+                    }
+                    app.world.borrow_mut().models.remove(&id);
                 }
             }
         }

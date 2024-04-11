@@ -26,7 +26,7 @@ vec3 UnprojectPoint(float x, float y, float z, mat4 view, mat4 projection) {
 }
 
 void main() {
-    SceneData sceneData = PushConstants.sceneDataBuffer.sceneData;
+    SceneDataBuffer sceneData = PushConstants.sceneDataBuffer;
 
     vec3 p = gridPlane[gl_VertexIndex].xyz;
     nearPoint = UnprojectPoint(p.x, p.y, 0.0, sceneData.view, sceneData.proj).xyz; // unprojecting on the near plane

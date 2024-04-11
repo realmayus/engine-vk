@@ -5,6 +5,7 @@ use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 
 use crate::asset::material::MaterialManager;
+use crate::scene::light::LightManager;
 use std::ffi::CStr;
 
 pub struct MeshPipeline {
@@ -21,12 +22,12 @@ struct PushConstants {
     scene_data: vk::DeviceAddress,
     vertex_buffer: vk::DeviceAddress,
     material_buffer: vk::DeviceAddress,
-    padding: u64,
+    light_buffer: vk::DeviceAddress,
 }
 
 impl MeshPipeline {
     pub fn new(
-        device: &ash::Device,
+        device: &Device,
         window_size: (u32, u32),
         deletion_queue: &mut DeletionQueue,
         bindless_set_layout: vk::DescriptorSetLayout,
@@ -111,6 +112,7 @@ impl MeshPipeline {
         bindless_descriptor_set: vk::DescriptorSet,
         scene_data: vk::DeviceAddress,
         material_manager: &MaterialManager,
+        light_manager: &LightManager,
     ) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(target_view)
@@ -153,10 +155,10 @@ impl MeshPipeline {
             for mesh in meshes {
                 let push_constants = PushConstants {
                     scene_data,
-                    vertex_buffer: mesh.vertex_buffer_address(),
-                    material_buffer: material_manager.get_material(mesh.material).unwrap().buffer_address(device),
-                    transform: (mesh.parent_transform * mesh.transform).to_cols_array_2d(),
-                    padding: 0,
+                    vertex_buffer: mesh.device_address(),
+                    material_buffer: material_manager.get_material(mesh.material).unwrap().device_address(device),
+                    transform: mesh.transform.to_cols_array_2d(),
+                    light_buffer: light_manager.device_address(device),
                 };
                 device.cmd_push_constants(
                     cmd,

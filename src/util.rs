@@ -226,6 +226,22 @@ pub fn size_image(width: usize, height: usize, required_width: usize) -> (usize,
     (required_width, new_height as usize)
 }
 
+pub trait IntoGpuMatrix {
+    fn into_gpu_matrix(self) -> [[f32; 4]; 4];
+}
+
+impl IntoGpuMatrix for glam::Mat4 {
+    fn into_gpu_matrix(self) -> [[f32; 4]; 4] {
+        self.to_cols_array_2d()
+    }
+}
+
+impl IntoGpuMatrix for [[f32; 4]; 4] {
+    fn into_gpu_matrix(self) -> [[f32; 4]; 4] {
+        self
+    }
+}
+
 #[macro_export]
 macro_rules! frame {
     ($m: ident) => {
@@ -239,6 +255,7 @@ macro_rules! observe {
         let before = $field.clone();
         $code
         if before != $field {
+            let $model = $field;
             $update
         }
     };

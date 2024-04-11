@@ -10,6 +10,7 @@ pub struct WrappedBuffer<T>
 where
     T: Clone,
 {
+    pub dirty: bool,
     pub buffer: AllocatedBuffer,
     pub data: T,
 }
@@ -36,6 +37,8 @@ pub struct AllocatedBuffer {
     pub(crate) allocation: Allocation,
     pub(crate) size: DeviceSize,
     pub label: Option<String>,
+    flags: vk::BufferUsageFlags,
+    alloc_flags: AllocUsage,
 }
 
 impl AllocatedBuffer {
@@ -47,7 +50,9 @@ impl AllocatedBuffer {
         size: DeviceSize,
         label: Option<String>,
     ) -> Self {
-        let info = vk::BufferCreateInfo::default().size(size).usage(buffer_usages);
+        debug_assert!(size > 0);
+        let usage_flags = buffer_usages | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST;
+        let info = vk::BufferCreateInfo::default().size(size).usage(usage_flags); // we want to resize almost all buffers, and there's no performance penalty, really...
         let buffer = unsafe { device.create_buffer(&info, None) }.unwrap();
         let reqs = unsafe { device.get_buffer_memory_requirements(buffer) };
         let allocation = unsafe {
@@ -85,6 +90,8 @@ impl AllocatedBuffer {
             allocation,
             size,
             label,
+            flags: usage_flags,
+            alloc_flags: alloc_usages,
         }
     }
 
@@ -96,6 +103,8 @@ impl AllocatedBuffer {
         allocator: &mut Allocator,
         cmd_buffer: vk::CommandBuffer,
     ) -> Box<dyn FnOnce(&Device, &mut Allocator)> {
+        debug_assert!(offset + (mem::size_of::<T>() as u64 * data.len() as u64) <= self.size);
+
         let size = mem::size_of::<T>() as u64 * data.len() as u64;
         let mut staging = AllocatedBuffer::new(
             device,
@@ -134,6 +143,7 @@ impl AllocatedBuffer {
     }
 
     pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
+        debug_assert!(self.flags.contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS));
         unsafe { device.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(self.buffer)) }
     }
 
@@ -148,5 +158,37 @@ impl AllocatedBuffer {
         }
         unsafe { device.destroy_buffer(self.buffer, None) };
         unsafe { allocator.dealloc(AshMemoryDevice::wrap(device), self.allocation) };
+    }
+
+    // destroy old buffer, create new buffer and copy all data
+    pub fn resize(&mut self, ctx: &mut SubmitContext, new_size: DeviceSize) {
+        let new = Self::new(
+            &ctx.device,
+            &mut ctx.allocator.borrow_mut(),
+            self.flags,
+            self.alloc_flags,
+            new_size,
+            self.label.clone(),
+        );
+        debug!(
+            "Resizing buffer '{}' from {} B ({:?}) to {} B ({:?})",
+            self.label.as_deref().unwrap_or_default(),
+            self.size,
+            self.buffer,
+            new_size,
+            new.buffer
+        );
+        let copy = vk::BufferCopy {
+            src_offset: 0,
+            dst_offset: 0,
+            size: self.size.min(new_size),
+        };
+        unsafe {
+            ctx.device.cmd_copy_buffer(ctx.cmd_buffer, self.buffer, new.buffer, &[copy]);
+        }
+        let old = mem::replace(self, new);
+        ctx.add_cleanup(Box::new(move |device, allocator| {
+            old.destroy(device, allocator);
+        }));
     }
 }

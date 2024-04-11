@@ -22,7 +22,6 @@ pub struct Mesh {
     pub uvs: Vec<Vec2>,
     pub material: MaterialId,
     pub transform: Mat4,
-    pub parent_transform: Mat4,
 }
 
 impl Mesh {
@@ -122,7 +121,7 @@ impl Mesh {
         }));
     }
 
-    pub fn vertex_buffer_address(&self) -> vk::DeviceAddress {
+    pub fn device_address(&self) -> vk::DeviceAddress {
         self.mem.as_ref().unwrap().vertex_address
     }
     pub fn index_buffer(&self) -> vk::Buffer {

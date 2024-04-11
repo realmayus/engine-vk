@@ -179,6 +179,7 @@ pub fn update_set(
     unsafe { device.update_descriptor_sets(&writes, &[]) }
 }
 
+#[derive(Debug, Copy, Clone)]
 pub enum AllocUsage {
     GpuOnly,
     Shared,
@@ -206,8 +207,18 @@ pub mod immediate_submit {
     use crate::App;
     use ash::{vk, Device};
     use std::cell::RefCell;
+    use std::ops::Deref;
     use std::rc::Rc;
 
+    /**
+    # Convention:
+    If you want to chain multiple functions that take a SubmitContext, you should `nest` them.
+
+    **Functions taking an owned SubmitContext must call immediate_submit on their own, unless they are nested into a superior SubmitContext.**
+    Just accessing the command buffer without calling immediate_submit is undefined behavior.
+
+    A function that takes `&mut SubmitContext` doesn't call immediate_submit on its own - as that takes ownership.
+     */
     pub struct SubmitContext {
         pub device: Rc<Device>,
         pub allocator: Rc<RefCell<Allocator>>,
@@ -252,17 +263,16 @@ pub mod immediate_submit {
         Submits all commands to the GPU. Then, all cleanup functions are executed. This consumes the context.
          */
         pub fn immediate_submit<T>(mut self, cmd: ImmediateSubmitFn<T>) -> T {
-            let cmd_buffer = self.cmd_buffer;
             unsafe {
                 self.device.reset_fences(&[self.fence]).unwrap();
                 self.device
-                    .reset_command_buffer(cmd_buffer, vk::CommandBufferResetFlags::empty())
+                    .reset_command_buffer(self.cmd_buffer, vk::CommandBufferResetFlags::empty())
                     .unwrap();
                 let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-                self.device.begin_command_buffer(cmd_buffer, &begin_info).unwrap();
+                self.device.begin_command_buffer(self.cmd_buffer, &begin_info).unwrap();
                 let res = cmd(&mut self);
-                self.device.end_command_buffer(cmd_buffer).unwrap();
-                let cmd_buffer_submit = vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer);
+                self.device.end_command_buffer(self.cmd_buffer).unwrap();
+                let cmd_buffer_submit = vk::CommandBufferSubmitInfo::default().command_buffer(self.cmd_buffer);
                 let cmd_buffer_submits = [cmd_buffer_submit];
                 let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&cmd_buffer_submits);
                 let submits = [submit_info];
