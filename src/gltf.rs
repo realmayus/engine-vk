@@ -11,8 +11,9 @@ use ash::{vk, Device};
 use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
 use gltf::khr_lights_punctual::Kind;
 use hashbrown::HashMap;
-use log::info;
+use log::{error, info};
 use std::cell::RefCell;
+use std::error::Error;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -61,11 +62,17 @@ impl GltfReader {
         ctx.immediate_submit(Box::new(|ctx| {
             let mut mapping = HashMap::<usize, ModelId>::new();
             for node in gltf.nodes() {
-                let model = self.load_model(&node, &buffers, &images, ctx, Mat4::IDENTITY);
-                mapping.insert(node.index(), model);
+                match self.load_model(&node, &buffers, &images, ctx, Mat4::IDENTITY) {
+                    Ok(model) => {
+                        mapping.insert(node.index(), model);
+                    }
+                    Err(e) => {
+                        error!("Error loading model: {:?}", e);
+                    }
+                }
             }
             for node in gltf.nodes() {
-                let model = mapping.get(&node.index()).unwrap();
+                let Some(model) = mapping.get(&node.index()) else { continue };
                 for child in node.children() {
                     self.world
                         .borrow_mut()
@@ -93,7 +100,7 @@ impl GltfReader {
         images: &[ImageData],
         ctx: &mut SubmitContext,
         parent_transform: Mat4,
-    ) -> ModelId {
+    ) -> Result<ModelId, Box<dyn Error>> {
         let node_transform = Mat4::from_cols_array_2d(&node.transform().matrix());
         let mut model = Model {
             label: node.name().map(|x| x.to_string()),
@@ -102,13 +109,24 @@ impl GltfReader {
         };
 
         if let Some(light) = node.light() {
-            info!("Node has a light!");
             match light.kind() {
                 Kind::Directional => {
-                    info!("Directional light");
+                    info!("Node has directional light");
                 }
                 Kind::Point => {
-                    info!("Point light");
+                    info!("Node has point light");
+                    let dir = (-Vec4::Y).normalize(); // todo check this
+
+                    let light = Light::new_spotlight(
+                        node_transform.w_axis.xyz(),
+                        [1.0, 1.0, 1.0],
+                        60.0f32.to_radians(),
+                        (1000.0, 1000.0),
+                        dir.xyz(),
+                        light.intensity(),
+                    );
+                    let light = self.light_manager.borrow_mut().add_light(light, ctx);
+                    model.light = Some(light);
                 }
                 Kind::Spot {
                     inner_cone_angle,
@@ -130,17 +148,20 @@ impl GltfReader {
                     model.light = Some(light);
                 }
             }
+            // let mut mesh = scene::util::generate_cube();
+            // ctx.nest(Box::new(|ctx| {
+            //     mesh.upload(ctx)
+            // }))?;
+            // model.meshes.push(mesh);
         }
 
-        if node.name().map(|x| x.starts_with("LightStrip")).unwrap_or(false) {
-            println!("{:#?}", node_transform);
-        }
         for mesh in node.mesh().iter() {
             for primitive in mesh.primitives() {
                 let mut vertices = Vec::new();
                 let mut indices = Vec::new();
                 let mut normals = Vec::new();
                 let mut uvs = Vec::new();
+                let mut tangents = Vec::new();
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
                 if let Some(iter) = reader.read_positions() {
                     for position in iter {
@@ -159,7 +180,13 @@ impl GltfReader {
                 }
                 if let Some(iter) = reader.read_tex_coords(0) {
                     for uv in iter.into_f32() {
-                        uvs.push(Vec2::from(uv));
+                        // Vulkan has a different coordinate system for textures
+                        uvs.push(Vec2::new(uv[0], 1.0 - uv[1]));
+                    }
+                }
+                if let Some(iter) = reader.read_tangents() {
+                    for tangent in iter {
+                        tangents.push(Vec4::from(tangent));
                     }
                 }
                 let gltf_material = primitive.material();
@@ -177,16 +204,16 @@ impl GltfReader {
                     indices,
                     normals,
                     uvs,
+                    tangents,
                     material: material_id,
                     transform: parent_transform,
                 };
-                ctx.nest(Box::new(|ctx| {
-                    mesh.upload(ctx);
-                }));
+
+                ctx.nest(Box::new(|ctx| mesh.upload(ctx)))?;
                 model.meshes.push(mesh);
             }
         }
-        self.world.borrow_mut().add_model(model)
+        Ok(self.world.borrow_mut().add_model(model))
     }
 
     fn load_material(&mut self, material: gltf::Material, images: &[ImageData], ctx: &mut SubmitContext) -> MaterialId {
@@ -219,15 +246,42 @@ impl GltfReader {
             }));
             self.texture_manager.borrow_mut().add_texture(texture, &ctx.device, false)
         });
+
+        let metallic_roughness_texture = pbr.metallic_roughness_texture().map(|info| {
+            let image = images.get(info.texture().source().index()).unwrap();
+
+            let texture = ctx.nest(Box::new(|ctx| {
+                Texture::new(
+                    TextureManager::DEFAULT_SAMPLER_NEAREST,
+                    vk::Format::R8G8B8A8_SRGB,
+                    ctx,
+                    Some(info.texture().name().map(|x| x.to_string()).unwrap_or(format!(
+                        "MetRough, Material: {} ({})",
+                        material.name().unwrap_or_default(),
+                        self.material_manager.borrow().next_free_id()
+                    ))),
+                    &image.data,
+                    vk::Extent3D {
+                        width: image.width,
+                        height: image.height,
+                        depth: 1,
+                    },
+                )
+            }));
+            self.texture_manager.borrow_mut().add_texture(texture, &ctx.device, false)
+        });
+
         let engine_material = ctx.nest(Box::new(|ctx| {
             Material::new(
                 Some(material.name().unwrap_or_default().to_string()),
                 RawMaterial::Pbr(PbrMaterial {
-                    texture: texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
-                    albedo,
+                    albedo_texture: texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
+                    normal_texture: TextureManager::DEFAULT_TEXTURE_NORMAL, //TODO load normal texture
+                    metallic_roughness_texture: TextureManager::DEFAULT_TEXTURE_WHITE,
+                    // metallic_roughness_texture: metallic_roughness_texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
+                    albedo: albedo.into(),
                     metallic: pbr.metallic_factor(),
                     roughness: pbr.roughness_factor(),
-                    padding: 0.0,
                 }),
                 ctx,
             )

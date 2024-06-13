@@ -41,6 +41,7 @@ impl AllocatedImage {
             .usage(image_usages)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let image = unsafe { device.create_image(&info, None) }.unwrap();
+        println!("Created image '{:?}': {:?}", label, image);
         let reqs = unsafe { device.get_image_memory_requirements(image) };
         let allocation = unsafe {
             allocator

@@ -4,16 +4,18 @@ pub mod mesh;
 
 use crate::{DEPTH_FORMAT, SWAPCHAIN_IMAGE_FORMAT};
 use ash::{vk, Device};
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Pod;
+use bytemuck::Zeroable;
 
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
-pub(crate) struct Vertex {
-    pub(crate) position: [f32; 3],
-    pub(crate) uv_x: f32,
-    pub(crate) normal: [f32; 3],
-    pub(crate) uv_y: f32,
-    pub(crate) color: [f32; 4],
+pub(crate) struct PbrVertex {
+    pub position: [f32; 3],
+    pub uv_x: f32,
+    pub normal: [f32; 3],
+    pub uv_y: f32,
+    pub color: [f32; 4],
+    pub tangent: [f32; 4],
 }
 pub struct PipelineBuilder<'a> {
     pub shader_stages: Vec<vk::PipelineShaderStageCreateInfo<'a>>,
@@ -65,7 +67,7 @@ impl Default for PipelineBuilder<'_> {
             rasterization: vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
                 .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::CLOCKWISE)
+                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .line_width(1.0),
             color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
                 .blend_enable(false)
@@ -95,8 +97,7 @@ impl Default for PipelineBuilder<'_> {
 }
 
 #[repr(C)]
-#[repr(align(16))]
-#[derive(Clone)]
+#[derive(Pod, Zeroable, Copy, Clone, Debug)]
 pub struct GpuSceneData {
     pub view: [[f32; 4]; 4],
     pub proj: [[f32; 4]; 4],
@@ -105,5 +106,4 @@ pub struct GpuSceneData {
     pub ambient_color: [f32; 4],
     pub camera_position: [f32; 4],
     pub light_count: u32,
-    pub padding: [u32; 3],
 }

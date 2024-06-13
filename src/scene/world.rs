@@ -1,3 +1,4 @@
+use crate::asset::material::{Material, MaterialManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::Allocator;
 use crate::scene::light::LightManager;
@@ -27,8 +28,20 @@ impl World {
         id
     }
 
-    pub fn get_meshes(&self) -> Vec<&Mesh> {
-        self.models.iter().flat_map(|(_, model)| model.meshes.iter()).collect()
+    pub fn iter_meshes(&self) -> impl Iterator<Item = &Mesh> {
+        self.models.iter().flat_map(|(_, model)| model.meshes.iter())
+    }
+
+    pub fn iter_pbr_meshes<'a>(&'a self, material_mgr: &'a MaterialManager) -> impl Iterator<Item = &Mesh> + 'a {
+        self.models
+            .iter()
+            .flat_map(|(_, model)| model.meshes.iter().filter(|mesh| material_mgr.is_pbr(mesh.material)))
+    }
+
+    pub fn iter_unlit_meshes<'a>(&'a self, material_mgr: &'a MaterialManager) -> impl Iterator<Item = &Mesh> + 'a {
+        self.models
+            .iter()
+            .flat_map(|(_, model)| model.meshes.iter().filter(|mesh| material_mgr.is_unlit(mesh.material)))
     }
 
     pub fn get_toplevel_model_ids(&self) -> Vec<ModelId> {
@@ -70,8 +83,6 @@ impl World {
                 light,
                 |light| {
                     light.position = transform.w_axis.to_array();
-                    // light.direction = (transform * -Vec4::Y).normalize().to_array();
-                    light.direction = (-Vec4::Y).normalize().to_array();
                 },
                 ctx,
             );
