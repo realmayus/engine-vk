@@ -65,7 +65,7 @@ impl Default for PipelineBuilder<'_> {
             rasterization: vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
                 .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::CLOCKWISE)
+                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .line_width(1.0),
             color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
                 .blend_enable(false)

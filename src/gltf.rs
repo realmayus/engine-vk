@@ -159,7 +159,7 @@ impl GltfReader {
                 }
                 if let Some(iter) = reader.read_tex_coords(0) {
                     for uv in iter.into_f32() {
-                        uvs.push(Vec2::from(uv));
+                        uvs.push(Vec2::new(uv[0], 1.0 - uv[1]));
                     }
                 }
                 let gltf_material = primitive.material();
