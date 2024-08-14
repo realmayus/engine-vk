@@ -12,17 +12,10 @@ layout(buffer_reference, std430) readonly buffer SceneDataBuffer {
 };
 
 layout(buffer_reference, std430) readonly buffer PbrMaterial {
-    vec4 albedo;  // these are factors; in case no texture is present we use white default and scale it
+    vec4 albedo;
+    uint texture;
     float metallic;
     float roughness;
-    uint albedoTexture;
-    uint normalTexture;
-    uint metallicRoughnessTexture;
-};
-
-layout(buffer_reference, std430) readonly buffer UnlitMaterial {
-    vec4 albedo;
-    uint albedoTexture;
 };
 
 
@@ -32,7 +25,6 @@ struct Vertex {
     vec3 normal;
     float uv_y;
     vec4 color;
-    vec4 tangent;
 };
 
 layout(buffer_reference, std430) readonly buffer VertexBuffer {
@@ -42,8 +34,11 @@ layout(buffer_reference, std430) readonly buffer VertexBuffer {
 struct Light {
     vec4 position;
     vec4 color;
-    vec3 radiance;
     mat4 modelview; // only for spotlights; identity matrix for point lights
+    vec4 direction;
+    uint type;  // 0 - spotlight, 1 - point light
+    float intensity;
+    float cutoff_angle;
     // uint shadow_map; // texture index
 };
 

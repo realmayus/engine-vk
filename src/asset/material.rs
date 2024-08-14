@@ -4,7 +4,6 @@ use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::AllocUsage;
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
-use glam::Vec4;
 use hashbrown::HashMap;
 
 pub type MaterialId = usize;
@@ -59,15 +58,15 @@ pub enum RawMaterial {
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 pub struct UnlitMaterial {
-    pub albedo: [f32; 4],
-    pub albedo_texture: TextureId,
+    pub texture: TextureId, // 0 if no texture
+    pub color: [f32; 3],
 }
 
 impl Default for UnlitMaterial {
     fn default() -> Self {
         Self {
-            albedo: [1.0, 1.0, 1.0, 1.0],
-            albedo_texture: TextureManager::DEFAULT_TEXTURE_WHITE,
+            texture: 0,
+            color: [1.0, 1.0, 1.0],
         }
     }
 }
@@ -76,22 +75,20 @@ impl Default for UnlitMaterial {
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 pub struct PbrMaterial {
     pub albedo: [f32; 4],
+    pub texture: TextureId, // 0 if no texture
     pub metallic: f32,
     pub roughness: f32,
-    pub albedo_texture: TextureId,
-    pub normal_texture: TextureId,
-    pub metallic_roughness_texture: TextureId,
+    pub padding: f32,
 }
 
 impl Default for PbrMaterial {
     fn default() -> Self {
         Self {
-            albedo_texture: TextureManager::DEFAULT_TEXTURE_WHITE,
-            normal_texture: TextureManager::DEFAULT_TEXTURE_NORMAL,
-            metallic_roughness_texture: TextureManager::DEFAULT_TEXTURE_WHITE,
-            albedo: Vec4::ONE.to_array(),
+            texture: 0,
+            albedo: [1.0, 1.0, 1.0, 1.0],
             metallic: 0.0,
             roughness: 0.0,
+            padding: 0.0,
         }
     }
 }
@@ -105,7 +102,17 @@ impl MaterialManager {
     pub const DEFAULT_MATERIAL: MaterialId = 0;
     pub fn new(ctx: &mut SubmitContext) -> Self {
         let default_material = ctx.nest(Box::new(|ctx| {
-            Material::new(Some("Default material".into()), RawMaterial::Pbr(PbrMaterial::default()), ctx)
+            Material::new(
+                Some("Default material".into()),
+                RawMaterial::Pbr(PbrMaterial {
+                    texture: TextureManager::DEFAULT_TEXTURE_WHITE,
+                    albedo: [1.0, 1.0, 1.0, 1.0],
+                    metallic: 0.0,
+                    roughness: 0.0,
+                    padding: 0.0,
+                }),
+                ctx,
+            )
         }));
 
         Self {
@@ -119,14 +126,6 @@ impl MaterialManager {
         self.materials.insert(self.max_id, material);
         self.max_id += 1;
         self.max_id - 1
-    }
-
-    pub fn is_pbr(&self, id: MaterialId) -> bool {
-        matches!(self.materials.get(&id).unwrap().data, RawMaterial::Pbr(_))
-    }
-
-    pub fn is_unlit(&self, id: MaterialId) -> bool {
-        matches!(self.materials.get(&id).unwrap().data, RawMaterial::Unlit(_))
     }
 
     pub fn iter_materials(&self) -> impl Iterator<Item = &Material> {

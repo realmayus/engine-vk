@@ -157,24 +157,39 @@ impl Gui {
                 ui.collapsing(format!("Light {}", light_id), |ui| {
                     let mgr = light_manager.borrow();
                     let light = mgr.get_light(light_id).unwrap();
+                    ui.label(format!("Type: {:?}", if light.data.ty == 0 { "Spot" } else { "Point" }));
                     ui.label(format!("Color: {:?}", light.data.color));
+                    ui.label(format!("Intensity: {:?}", light.data.intensity));
                     ui.label(format!("Position: {:?}", light.data.position));
-                    let mut radiance = light.data.radiance;
+                    ui.label(format!("Direction: {:?}", light.data.direction));
+                    ui.label(format!(
+                        "Cutoff: {:?} / {}°",
+                        light.data.cutoff_angle,
+                        light.data.cutoff_angle.to_degrees()
+                    ));
+                    let mut cutoff = light.data.cutoff_angle.to_degrees();
+                    let mut intensity = light.data.intensity;
+                    let mut dir = light.data.direction;
                     drop(mgr);
                     observe!(
-                        radiance,
+                        (cutoff, intensity, dir),
                         {
-                            ui.add(egui::Slider::new(&mut radiance[0], -2.0..=2.0).text("Rad X"));
-                            ui.add(egui::Slider::new(&mut radiance[1], -2.0..=2.0).text("Rad Y"));
-                            ui.add(egui::Slider::new(&mut radiance[2], -2.0..=2.0).text("Rad Z"));
-                            ui.add(egui::Slider::new(&mut radiance[3], 0.0..=1.0).text("Rad W"));
+                            ui.add(egui::Slider::new(&mut cutoff, 0.0..=360.0).text("Cutoff"));
+                            ui.add(egui::Slider::new(&mut intensity, 0.0..=50000.0).text("Intensity"));
+                            ui.add(egui::Slider::new(&mut dir[0], -2.0..=2.0).text("Dir X"));
+                            ui.add(egui::Slider::new(&mut dir[1], -2.0..=2.0).text("Dir Y"));
+                            ui.add(egui::Slider::new(&mut dir[2], -2.0..=2.0).text("Dir Z"));
+                            ui.add(egui::Slider::new(&mut dir[3], 0.0..=1.0).text("Dir W"));
                         },
                         |v| {
                             _submit_context.clone().immediate_submit(Box::new(|ctx| {
                                 light_manager.borrow_mut().update_light(
                                     light_id,
                                     |light| {
-                                        light.radiance = v;
+                                        light.cutoff_angle = v.0.to_radians();
+                                        light.intensity = v.1;
+                                        light.direction = dir;
+                                        // light.position = camera.view().mul(camera.proj()).transform_point3(Vec4::from(light.position).xyz()).extend(1.0).to_array();
                                     },
                                     ctx,
                                 );
@@ -222,8 +237,8 @@ impl Gui {
                         ui.collapsing(
                             format!("Unlit {} ({})", material.label.clone().unwrap_or("Untitled".into()), material.id),
                             |ui| {
-                                ui.label(format!("Texture: {}", data.albedo_texture));
-                                ui.label(format!("Base color: {:?}", data.albedo));
+                                ui.label(format!("Texture: {}", data.texture));
+                                ui.label(format!("Base color: {:?}", data.color));
                             },
                         );
                     }
@@ -231,7 +246,7 @@ impl Gui {
                         ui.collapsing(
                             format!("PBR {} ({})", material.label.clone().unwrap_or("Untitled".into()), material.id),
                             |ui| {
-                                ui.label(format!("Texture: {}", data.albedo_texture));
+                                ui.label(format!("Texture: {}", data.texture));
                                 ui.label(format!("Base color: {:?}", data.albedo));
                                 ui.label(format!("Metallic factor: {}", data.metallic));
                                 ui.label(format!("Roughness factor: {}", data.roughness));

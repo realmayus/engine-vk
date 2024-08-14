@@ -71,8 +71,7 @@ impl GridPipeline {
 
         let viewport = vk::Viewport::default()
             .width(window_size.0 as f32)
-            .height(-(window_size.1 as f32))
-            .y(window_size.1 as f32)
+            .height(window_size.1 as f32)
             .max_depth(1.0);
         let scissor = vk::Rect2D::default().extent(vk::Extent2D {
             width: window_size.0,

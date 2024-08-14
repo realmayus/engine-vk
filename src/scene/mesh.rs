@@ -1,25 +1,22 @@
 use crate::asset::material::MaterialId;
-use crate::pipeline::PbrVertex;
+use crate::pipeline::Vertex;
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocator};
 use ash::{vk, Device};
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3};
 use gpu_alloc_ash::AshMemoryDevice;
-use std::error::Error;
 
-#[derive(Debug)]
 pub struct GpuMesh {
     index_buffer: AllocatedBuffer,
     vertex_buffer: AllocatedBuffer,
     vertex_address: vk::DeviceAddress,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct Mesh {
     pub mem: Option<GpuMesh>,
     pub vertices: Vec<Vec3>,
-    pub tangents: Vec<Vec4>,
     pub indices: Vec<u32>,
     pub normals: Vec<Vec3>,
     pub uvs: Vec<Vec2>,
@@ -28,34 +25,28 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn upload(&mut self, ctx: &mut SubmitContext) -> Result<(), Box<dyn Error>> {
-        if self.tangents.len() != self.vertices.len() {
-            return Err("Number of tangents must match number of vertices".into());
-        }
-        if self.normals.len() != self.vertices.len() {
-            return Err("Number of normals must match number of vertices".into());
-        }
-        if self.uvs.len() != self.vertices.len() {
-            return Err("Number of uvs must match number of vertices".into());
-        }
-
+    pub fn clear(&mut self) {
+        self.vertices.clear();
+        self.indices.clear();
+        self.normals.clear();
+        self.uvs.clear();
+    }
+    pub fn upload(&mut self, ctx: &mut SubmitContext) {
         let vertices = self
             .vertices
             .iter()
             .zip(self.normals.iter())
             .zip(self.uvs.iter())
-            .zip(self.tangents.iter())
-            .map(|(((vertex, normal), uv), tangent)| PbrVertex {
+            .map(|((vertex, normal), uv)| Vertex {
                 position: vertex.to_array(),
                 normal: normal.to_array(),
                 uv_x: uv.x,
                 uv_y: uv.y,
                 color: [0.4, 0.6, 0.3, 1.0],
-                tangent: tangent.to_array(),
             })
             .collect::<Vec<_>>();
 
-        let vertex_buffer_size = (vertices.len() * std::mem::size_of::<PbrVertex>()) as vk::DeviceSize;
+        let vertex_buffer_size = (vertices.len() * std::mem::size_of::<Vertex>()) as vk::DeviceSize;
         let index_buffer_size = (self.indices.len() * std::mem::size_of::<u32>()) as vk::DeviceSize;
         let vertex_buffer = AllocatedBuffer::new(
             &ctx.device,
@@ -92,7 +83,7 @@ impl Mesh {
                 .unwrap()
         };
         // copy vertex buffer
-        let vertex_buffer_ptr = map.as_ptr() as *mut PbrVertex;
+        let vertex_buffer_ptr = map.as_ptr() as *mut Vertex;
         unsafe {
             vertex_buffer_ptr.copy_from_nonoverlapping(vertices.as_ptr(), vertices.len());
             let index_buffer_ptr = vertex_buffer_ptr.add(vertices.len()) as *mut u32;
@@ -128,7 +119,6 @@ impl Mesh {
         ctx.add_cleanup(Box::from(move |device: &Device, allocator: &mut Allocator| {
             staging.destroy(device, allocator);
         }));
-        Ok(())
     }
 
     pub fn device_address(&self) -> vk::DeviceAddress {

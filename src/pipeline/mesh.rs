@@ -2,17 +2,16 @@ use crate::pipeline::PipelineBuilder;
 use crate::scene::mesh::Mesh;
 use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
+use bytemuck::{Pod, Zeroable};
 
 use crate::asset::material::MaterialManager;
 use crate::scene::light::LightManager;
-use bytemuck::{Pod, Zeroable};
 use std::ffi::CStr;
 
 pub struct MeshPipeline {
     viewport: vk::Viewport,
     scissor: vk::Rect2D,
-    pbr_pipeline: vk::Pipeline,
-    // unlit_pipeline: vk::Pipeline,
+    pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
     window_size: (u32, u32),
 }
@@ -33,14 +32,10 @@ impl MeshPipeline {
         deletion_queue: &mut DeletionQueue,
         bindless_set_layout: vk::DescriptorSetLayout,
     ) -> Self {
-        let pbr_vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/pbr.vert.spv")).expect("Failed to load vertex shader module");
-        let pbr_fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/pbr.frag.spv")).expect("Failed to load fragment shader module");
-        let unlit_vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/unlit.vert.spv")).expect("Failed to load vertex shader module");
-        let unlit_fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/unlit.frag.spv")).expect("Failed to load fragment shader module");
+        let vertex_shader =
+            load_shader_module(device, include_bytes!("../shaders/spirv/mesh.vert.spv")).expect("Failed to load vertex shader module");
+        let fragment_shader =
+            load_shader_module(device, include_bytes!("../shaders/spirv/mesh.frag.spv")).expect("Failed to load fragment shader module");
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)
@@ -51,57 +46,36 @@ impl MeshPipeline {
             .set_layouts(&binding)
             .push_constant_ranges(&push_constant_range);
         let layout = unsafe { device.create_pipeline_layout(&layout_create_info, None).unwrap() };
-        let pbr_pipeline_builder = PipelineBuilder {
+        let pipeline_builder = PipelineBuilder {
             layout: Some(layout),
             shader_stages: vec![
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::VERTEX)
-                    .module(pbr_vertex_shader)
+                    .module(vertex_shader)
                     .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::FRAGMENT)
-                    .module(pbr_fragment_shader)
+                    .module(fragment_shader)
                     .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
             ],
             ..Default::default()
         };
 
-        let pbr_pipeline = pbr_pipeline_builder.build(device);
-
-        // let unlit_pipeline_builder = PipelineBuilder {
-        //     layout: Some(layout),
-        //     shader_stages: vec![
-        //         vk::PipelineShaderStageCreateInfo::default()
-        //             .stage(vk::ShaderStageFlags::VERTEX)
-        //             .module(unlit_vertex_shader)
-        //             .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
-        //         vk::PipelineShaderStageCreateInfo::default()
-        //             .stage(vk::ShaderStageFlags::FRAGMENT)
-        //             .module(unlit_fragment_shader)
-        //             .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
-        //     ],
-        //     ..Default::default()
-        // };
-        //
-        // let unlit_pipeline = unlit_pipeline_builder.build(device);
+        let pipeline = pipeline_builder.build(device);
 
         unsafe {
-            device.destroy_shader_module(pbr_vertex_shader, None);
-            device.destroy_shader_module(pbr_fragment_shader, None);
-            // device.destroy_shader_module(unlit_vertex_shader, None);
-            // device.destroy_shader_module(unlit_fragment_shader, None);
+            device.destroy_shader_module(vertex_shader, None);
+            device.destroy_shader_module(fragment_shader, None);
         }
 
         deletion_queue.push(move |device, _allocator| unsafe {
             device.destroy_pipeline_layout(layout, None);
-            device.destroy_pipeline(pbr_pipeline, None);
-            // device.destroy_pipeline(unlit_pipeline, None);
+            device.destroy_pipeline(pipeline, None);
         });
 
         let viewport = vk::Viewport::default()
             .width(window_size.0 as f32)
-            .height(-(window_size.1 as f32))
-            .y(window_size.1 as f32)
+            .height(window_size.1 as f32)
             .max_depth(1.0);
         let scissor = vk::Rect2D::default().extent(vk::Extent2D {
             width: window_size.0,
@@ -111,8 +85,7 @@ impl MeshPipeline {
         Self {
             viewport,
             scissor,
-            pbr_pipeline,
-            // unlit_pipeline,
+            pipeline,
             layout,
             window_size,
         }
@@ -133,8 +106,7 @@ impl MeshPipeline {
         &self,
         device: &Device,
         cmd: vk::CommandBuffer,
-        pbr_meshes: &[&Mesh],
-        unlit_meshes: &[&Mesh],
+        meshes: &[&Mesh],
         target_view: vk::ImageView,
         depth_view: vk::ImageView,
         bindless_descriptor_set: vk::DescriptorSet,
@@ -176,11 +148,11 @@ impl MeshPipeline {
                 &[],
             );
             device.cmd_begin_rendering(cmd, &render_info);
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pbr_pipeline);
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
             device.cmd_set_viewport(cmd, 0, &[self.viewport]);
             device.cmd_set_scissor(cmd, 0, &[self.scissor]);
-            for mesh in pbr_meshes {
+            for mesh in meshes {
                 let push_constants = PushConstants {
                     scene_data,
                     vertex_buffer: mesh.device_address(),

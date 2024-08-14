@@ -165,6 +165,7 @@ impl App {
                 ambient_color: Default::default(),
                 camera_position: Default::default(),
                 light_count: 0,
+                padding: Default::default(),
             },
         };
 
@@ -728,24 +729,14 @@ impl App {
             self.mesh_pipeline.draw(
                 &self.device,
                 cmd_buffer,
-                &self
-                    .world
-                    .borrow()
-                    .iter_pbr_meshes(&self.material_manager.borrow())
-                    .collect::<Vec<_>>(),
-                &self
-                    .world
-                    .borrow()
-                    .iter_unlit_meshes(&self.material_manager.borrow())
-                    .collect::<Vec<_>>(),
-                self.depth_image.as_ref().unwrap().view,
+                &self.world.borrow().get_meshes(),
                 self.draw_image.as_ref().unwrap().view,
+                self.depth_image.as_ref().unwrap().view,
                 self.texture_manager.borrow().descriptor_set(),
                 self.scene_data.buffer.device_address(&self.device),
                 &self.material_manager.borrow(),
                 &self.light_manager.borrow(),
             );
-
             if self.settings.show_grid {
                 self.grid_pipeline.draw(
                     &self.device,
@@ -888,13 +879,13 @@ impl App {
         }
     }
 
-    fn input_window(&mut self, event: &WindowEvent) {
+    fn input_window(&mut self, event: &winit::event::WindowEvent) {
         if !self.egui_pipeline.input(&self.window, event) {
             match event {
-                WindowEvent::MouseInput { button, state, .. } => {
-                    if *button == winit::event::MouseButton::Left && *state == ElementState::Pressed {
+                winit::event::WindowEvent::MouseInput { button, state, .. } => {
+                    if *button == winit::event::MouseButton::Left && *state == winit::event::ElementState::Pressed {
                         self.camera.on_mouse_drag(true);
-                    } else if *button == winit::event::MouseButton::Left && *state == ElementState::Released {
+                    } else if *button == winit::event::MouseButton::Left && *state == winit::event::ElementState::Released {
                         self.camera.on_mouse_drag(false);
                     }
                 }
@@ -921,8 +912,11 @@ impl App {
     }
 
     fn input_device(&mut self, event: &winit::event::DeviceEvent) {
-        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
-            self.camera.on_mouse_move((delta.0 as f32, delta.1 as f32));
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                self.camera.on_mouse_move((delta.0 as f32, delta.1 as f32));
+            }
+            _ => {}
         }
     }
 
@@ -1003,7 +997,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.material_manager.clone(),
         app.light_manager.clone(),
     );
-    gltf_loader.load(Path::new("assets/cube_light_tan.glb"), ctx);
+    gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
 
     Ok(event_loop.unwrap().run(move |event, target| match event {
         Event::WindowEvent {

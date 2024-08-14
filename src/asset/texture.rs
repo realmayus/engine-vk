@@ -80,7 +80,6 @@ impl TextureManager {
     pub const DEFAULT_TEXTURE_WHITE: TextureId = 0;
     pub const DEFAULT_TEXTURE_BLACK: TextureId = 1;
     pub const DEFAULT_TEXTURE_CHECKERBOARD: TextureId = 2;
-    pub const DEFAULT_TEXTURE_NORMAL: TextureId = 3;
 
     pub fn new(descriptor_set: vk::DescriptorSet, ctx: &mut SubmitContext) -> Self {
         let mut manager = Self {
@@ -111,7 +110,6 @@ impl TextureManager {
         let white = [255u8, 255, 255, 255];
         let black = [0u8, 0, 0, 255];
         let magenta = [255u8, 0, 255, 255];
-        let normal = [128u8, 128, 255, 255];
         let pixels: [[u8; 4]; 16 * 16] = core::array::from_fn(|i|
             // create a checkerboard pattern of white and magenta
             if (i / 16 + i % 16) % 2 == 0 {
@@ -172,25 +170,6 @@ impl TextureManager {
                     vk::Extent3D {
                         width: 16,
                         height: 16,
-                        depth: 1,
-                    },
-                ),
-                &ctx.device,
-                false,
-            );
-        }));
-        ctx.nest(Box::new(|ctx| {
-            Self::add_texture(
-                &mut manager,
-                Texture::new(
-                    Self::DEFAULT_SAMPLER_NEAREST,
-                    TEXTURE_IMAGE_FORMAT,
-                    ctx,
-                    Some("Normal".into()),
-                    &normal,
-                    vk::Extent3D {
-                        width: 1,
-                        height: 1,
                         depth: 1,
                     },
                 ),
