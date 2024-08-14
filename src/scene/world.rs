@@ -70,8 +70,6 @@ impl World {
                 light,
                 |light| {
                     light.position = transform.w_axis.to_array();
-                    // light.direction = (transform * -Vec4::Y).normalize().to_array();
-                    light.direction = (-Vec4::Y).normalize().to_array();
                 },
                 ctx,
             );
