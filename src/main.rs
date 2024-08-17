@@ -20,6 +20,7 @@ use resource::immediate_submit::SubmitContext;
 use crate::asset::material::MaterialManager;
 use crate::commands::{Command, CommandHandler};
 use crate::gltf::GltfReader;
+use crate::pipeline::billboard::BillboardPipeline;
 use asset::texture::TextureManager;
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::device_properties;
@@ -77,6 +78,7 @@ struct App {
     mesh_pipeline: MeshPipeline,
     egui_pipeline: EguiPipeline,
     grid_pipeline: GridPipeline,
+    billboard_pipeline: BillboardPipeline,
     immediate_fence: vk::Fence,
     immediate_command_pool: vk::CommandPool,
     immediate_command_buffer: vk::CommandBuffer,
@@ -194,6 +196,9 @@ impl App {
                 graphics_queue.0,
             ),
         );
+
+        let billboard_pipeline = BillboardPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
+
         let texture_manager = SubmitContext::new(
             device.clone(),
             allocator.clone(),
@@ -242,6 +247,7 @@ impl App {
             mesh_pipeline,
             egui_pipeline,
             grid_pipeline,
+            billboard_pipeline,
             immediate_command_pool,
             immediate_command_buffer,
             immediate_fence,
@@ -289,7 +295,7 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        let device_features = vk::PhysicalDeviceFeatures::default();
+        let device_features = vk::PhysicalDeviceFeatures::default().geometry_shader(true);
         let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_indexing(true)
@@ -737,6 +743,23 @@ impl App {
                 &self.material_manager.borrow(),
                 &self.light_manager.borrow(),
             );
+
+            {
+                let world = self.world.borrow();
+                let billboards = world.get_billboards();
+                self.billboard_pipeline.draw(
+                    &self.device,
+                    cmd_buffer,
+                    &billboards,
+                    self.draw_image.as_ref().unwrap().view,
+                    self.depth_image.as_ref().unwrap().view,
+                    self.texture_manager.borrow().descriptor_set(),
+                    self.scene_data.buffer.device_address(&self.device),
+                    &self.material_manager.borrow(),
+                    &self.light_manager.borrow(),
+                );
+            }
+
             if self.settings.show_grid {
                 self.grid_pipeline.draw(
                     &self.device,

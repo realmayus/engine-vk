@@ -70,7 +70,6 @@ void main()
     vec3 lo = vec3(0.0);
     for(int i = 0; i < PushConstants.sceneDataBuffer.num_lights; i++)
     {
-        if (gl_FrontFacing) {
             Light light = PushConstants.lightBuffer.lights[i];
             vec4 lightPos = PushConstants.sceneDataBuffer.view * vec4(light.position.xyz, 1.0);
             float spotFactor = 1.0;  // multiplier to account for spotlight
@@ -88,8 +87,8 @@ void main()
                 }
             }
 
-            lo += calcPointLight(light, v, f0, normal) * spotFactor;
-        }
+            lo += calcPointLight(light, v, f0, normal) * 1.0;
+
     }
 
     vec3 ambient = vec3(0.03) * PushConstants.pbrMaterial.albedo.xyz; // * ao

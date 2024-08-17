@@ -1,3 +1,4 @@
+pub mod billboard;
 pub mod egui;
 pub mod grid;
 pub mod mesh;
@@ -65,7 +66,7 @@ impl Default for PipelineBuilder<'_> {
             rasterization: vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
                 .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+                .front_face(vk::FrontFace::CLOCKWISE)
                 .line_width(1.0),
             color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
                 .blend_enable(false)

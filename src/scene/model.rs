@@ -1,4 +1,5 @@
 use crate::resource::Allocator;
+use crate::scene::billboard::Billboard;
 use crate::scene::light::LightId;
 use crate::scene::mesh::Mesh;
 use ash::Device;
@@ -14,9 +15,21 @@ pub struct Model {
     pub label: Option<String>,
     pub transform: Mat4,
     pub light: Option<LightId>,
+    pub billboard: Option<Billboard>,
 }
 
 impl Model {
+    pub fn new(meshes: Vec<Mesh>, transform: Mat4, light: Option<LightId>, billboard: Option<Billboard>, label: Option<String>) -> Self {
+        Self {
+            id: 0,
+            meshes,
+            children: Vec::new(),
+            label,
+            transform,
+            light,
+            billboard,
+        }
+    }
     pub fn destroy(&mut self, device: &Device, allocator: &mut Allocator) {
         for mut mesh in self.meshes.drain(..) {
             mesh.destroy(device, allocator);

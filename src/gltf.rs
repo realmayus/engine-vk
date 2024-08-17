@@ -109,6 +109,9 @@ impl GltfReader {
                 }
                 Kind::Point => {
                     info!("Point light");
+                    let light = Light::new_pointlight(node_transform.w_axis.xyz(), [1.0, 1.0, 1.0], 60.0f32.to_radians());
+                    let light = self.light_manager.borrow_mut().add_light(light, ctx);
+                    model.light = Some(light);
                 }
                 Kind::Spot {
                     inner_cone_angle,
@@ -159,7 +162,7 @@ impl GltfReader {
                 }
                 if let Some(iter) = reader.read_tex_coords(0) {
                     for uv in iter.into_f32() {
-                        uvs.push(Vec2::new(uv[0], 1.0 - uv[1]));
+                        uvs.push(Vec2::new(uv[0], uv[1]));
                     }
                 }
                 let gltf_material = primitive.material();

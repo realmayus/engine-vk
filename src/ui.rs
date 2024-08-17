@@ -4,14 +4,15 @@ use crate::camera::Camera;
 use crate::commands::Command;
 use crate::observe;
 use crate::resource::immediate_submit::SubmitContext;
+use crate::scene::billboard::Billboard;
 use crate::scene::light::{LightManager, LightMeta};
-use crate::scene::model::ModelId;
+use crate::scene::model::{Model, ModelId};
 use crate::AppSettings;
 use crate::TextureManager;
 use crate::World;
 use crate::{util, MaterialManager};
 use egui::{RichText, TextBuffer, TextureFilter};
-use glam::{Mat4, Vec3, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
 use std::cell::RefCell;
 use std::ops::Mul;
 use std::rc::Rc;
@@ -117,6 +118,23 @@ impl Gui {
                     }
                 }
             });
+            ui.menu_button("Add", |ui| {
+                if ui.button("Add Billboard").clicked() {
+                    let billboard = Billboard::new(
+                        Vec4::new(0.0, 0.0, 1.0, 0.0),
+                        Vec2::new(1.0, 1.0),
+                        [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)],
+                        MaterialManager::DEFAULT_MATERIAL,
+                    );
+                    let model = Model::new(Vec::new(), Mat4::IDENTITY, None, Some(billboard), Some("Untitled Billboard".into()));
+                    let added = world.borrow_mut().add_model(model);
+                    println!(
+                        "Added billboard: {}, world's billboards: {:?}",
+                        added,
+                        world.borrow().get_billboards()
+                    );
+                }
+            });
             ui.checkbox(&mut app_settings.show_grid, "Show grid");
             egui::CollapsingHeader::new("Camera".as_str()).show(ui, |ui| {
                 observe!(
@@ -152,6 +170,8 @@ impl Gui {
                     _submit_context.clone(),
                 );
             }
+            ui.separator();
+            ui.label("Lights");
             let lights = light_manager.borrow().keys();
             for light_id in lights {
                 ui.collapsing(format!("Light {}", light_id), |ui| {
@@ -205,6 +225,79 @@ impl Gui {
                         }
                         LightMeta::Pointlight => {}
                     }
+                });
+            }
+
+            ui.separator();
+            ui.label("Billboards");
+            // list all models with billboards, add appropriate UI controls for modifying center of billboard
+            // get all (model_id, billboard) where model has billboard (is some)
+            let billboards = world
+                .borrow()
+                .models
+                .iter()
+                .filter_map(|(id, model)| model.billboard.as_ref().map(|billboard| (*id, billboard.clone())))
+                .collect::<Vec<_>>();
+
+            for (id, billboard) in billboards {
+                ui.collapsing(format!("Billboard {}", id), |ui| {
+                    ui.label(format!("Center: {:?}", billboard.center));
+                    let mut center = billboard.center;
+                    observe!(
+                        center,
+                        {
+                            ui.add(egui::DragValue::new(&mut center.x).clamp_range(-5.0..=5.0).speed(0.01).prefix("X"));
+                            ui.add(egui::DragValue::new(&mut center.y).clamp_range(-5.0..=5.0).speed(0.01).prefix("Y"));
+                            ui.add(egui::DragValue::new(&mut center.z).clamp_range(-5.0..=5.0).speed(0.01).prefix("Z"));
+                        },
+                        |v| {
+                            world.borrow_mut().update_billboard(id, v, billboard.uvs);
+                        }
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Material");
+                        egui::ComboBox::from_id_source("Material")
+                            .selected_text(
+                                material_manager
+                                    .borrow()
+                                    .get_material(billboard.material)
+                                    .unwrap()
+                                    .label
+                                    .clone()
+                                    .unwrap_or("Untitled".into()),
+                            )
+                            .show_ui(ui, |ui| {
+                                let material_manager = material_manager.borrow();
+                                for material in material_manager.iter_materials() {
+                                    ui.selectable_value(
+                                        &mut world.borrow_mut().models.get_mut(&id).unwrap().billboard.as_mut().unwrap().material,
+                                        material.id,
+                                        material.label.clone().unwrap_or("Untitled".into()),
+                                    );
+                                }
+                            });
+                    });
+
+                    // allow setting UVs
+                    ui.label("UVs");
+                    let mut uvs = billboard.uvs.clone();
+                    observe!(
+                        uvs,
+                        {
+                            for (i, uv) in billboard.uvs.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("UV {}", i));
+                                    let mut uv = *uv;
+                                    ui.add(egui::DragValue::new(&mut uv.x).clamp_range(0.0..=1.0).speed(0.01).prefix("X"));
+                                    ui.add(egui::DragValue::new(&mut uv.y).clamp_range(0.0..=1.0).speed(0.01).prefix("Y"));
+                                    uvs[i] = uv;
+                                });
+                            }
+                        },
+                        |v| {
+                            world.borrow_mut().update_billboard(id, billboard.center, v);
+                        }
+                    );
                 });
             }
         });

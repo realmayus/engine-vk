@@ -1,10 +1,12 @@
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::Allocator;
+use crate::scene::billboard::Billboard;
 use crate::scene::light::LightManager;
 use crate::scene::mesh::Mesh;
 use crate::scene::model::{Model, ModelId};
 use ash::Device;
 use egui::ahash::HashMap;
+use glam::Vec2;
 use glam::{Mat4, Vec4, Vec4Swizzles};
 use hashbrown::HashSet;
 
@@ -29,6 +31,10 @@ impl World {
 
     pub fn get_meshes(&self) -> Vec<&Mesh> {
         self.models.iter().flat_map(|(_, model)| model.meshes.iter()).collect()
+    }
+
+    pub fn get_billboards(&self) -> Vec<&Billboard> {
+        self.models.iter().filter_map(|(_, model)| model.billboard.as_ref()).collect()
     }
 
     pub fn get_toplevel_model_ids(&self) -> Vec<ModelId> {
@@ -77,5 +83,11 @@ impl World {
         for child in model.children.clone().as_slice() {
             self.update_transforms(*child, transform, light_manager, ctx);
         }
+    }
+
+    pub fn update_billboard(&mut self, billboard: ModelId, center: Vec4, uvs: [Vec2; 4]) {
+        let model = self.models.get_mut(&billboard).unwrap();
+        model.billboard.as_mut().unwrap().center = center;
+        model.billboard.as_mut().unwrap().uvs = uvs;
     }
 }
