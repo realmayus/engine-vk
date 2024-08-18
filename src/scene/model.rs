@@ -19,7 +19,13 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn new(meshes: Vec<Mesh>, transform: Mat4, light: Option<LightId>, billboard: Option<Billboard>, label: Option<String>) -> Self {
+    pub fn new(
+        meshes: Vec<Mesh>,
+        transform: Mat4,
+        light: Option<LightId>,
+        mut billboard: Option<Billboard>,
+        label: Option<String>,
+    ) -> Self {
         Self {
             id: 0,
             meshes,

@@ -100,17 +100,14 @@ impl GltfReader {
             ..Default::default()
         };
 
-        if let Some(light) = node.light() {
+        let mut model = if let Some(light) = node.light() {
             info!("Node has a light!");
             match light.kind() {
-                Kind::Directional => {
-                    info!("Directional light");
-                }
                 Kind::Point => {
                     info!("Point light");
                     let light = Light::new_pointlight(node_transform.w_axis.xyz(), [1.0, 1.0, 1.0], 60.0f32.to_radians());
                     let light = self.light_manager.borrow_mut().add_light(light, ctx);
-                    model.light = Some(light);
+                    Model::new(Vec::new(), node_transform, Some(light), None, node.name().map(|x| x.to_string()))
                 }
                 Kind::Spot {
                     inner_cone_angle,
@@ -129,10 +126,13 @@ impl GltfReader {
                         light.intensity(),
                     );
                     let light = self.light_manager.borrow_mut().add_light(light, ctx);
-                    model.light = Some(light);
+                    Model::new(Vec::new(), node_transform, Some(light), None, node.name().map(|x| x.to_string()))
                 }
+                _ => todo!("directional lights"),
             }
-        }
+        } else {
+            Model::new(Vec::new(), node_transform, None, None, node.name().map(|x| x.to_string()))
+        };
 
         if node.name().map(|x| x.starts_with("LightStrip")).unwrap_or(false) {
             println!("{:#?}", node_transform);

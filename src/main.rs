@@ -1067,7 +1067,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.material_manager.clone(),
         app.light_manager.clone(),
     );
-    gltf_loader.load(Path::new("assets/cube.glb"), ctx);
+    gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
 
     // todo restrict to "watch" feature
     let (watch_tx, watch_rx) = std::sync::mpsc::channel();

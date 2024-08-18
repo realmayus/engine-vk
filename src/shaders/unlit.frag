@@ -5,10 +5,11 @@
 layout (location = 0) in vec2 texCoords;
 
 
-layout( push_constant ) uniform constants
+layout( push_constant, scalar ) uniform constants
 {
     mat4 transform;  // model matrix
-    vec4[4] uv;
+    vec2 size;       // size of the billboard
+    vec2[4] uv;
     SceneDataBuffer sceneDataBuffer;
     PbrMaterial pbrMaterial;
     LightBuffer lightBuffer;

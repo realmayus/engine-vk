@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::asset::material::MaterialManager;
 use crate::scene::billboard::Billboard;
 use crate::scene::light::LightManager;
-use glam::{Mat4, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec2, Vec4, Vec4Swizzles};
 use image::EncodableLayout;
 use std::ffi::CStr;
 use std::fs;
@@ -22,7 +22,8 @@ pub struct BillboardPipeline {
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 struct PushConstants {
     transform: [[f32; 4]; 4],
-    uvs: [[f32; 4]; 4],
+    size: [f32; 2],
+    uvs: [[f32; 2]; 4],
     scene_data: vk::DeviceAddress,
     material_buffer: vk::DeviceAddress,
     light_buffer: vk::DeviceAddress,
@@ -42,7 +43,7 @@ impl BillboardPipeline {
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)
-            .size(std::mem::size_of::<PushConstants>() as u32)
+            .size(size_of::<PushConstants>() as u32)
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)];
         let binding = [bindless_set_layout];
         let layout_create_info = vk::PipelineLayoutCreateInfo::default()
@@ -161,10 +162,11 @@ impl BillboardPipeline {
             for billboard in billboards {
                 let push_constants = PushConstants {
                     transform: Mat4::from_translation(billboard.center.xyz()).to_cols_array_2d(),
+                    size: billboard.size.to_array(),
+                    uvs: billboard.uvs.map(|v| Vec2::from((v.x, v.y)).to_array()),
                     scene_data,
                     material_buffer: material_manager.get_material(billboard.material).unwrap().device_address(device),
                     light_buffer: light_manager.device_address(device),
-                    uvs: billboard.uvs.map(|v| Vec4::from((v.x, v.y, 0.0, 0.0)).to_array()),
                 };
 
                 device.cmd_push_constants(

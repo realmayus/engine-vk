@@ -36,14 +36,14 @@ impl Light {
             id: 0,
             meta: LightMeta::Spotlight { fov: fov_radians, extent },
             data: RawLight {
-                ty: 0,
                 position: [position[0], position[1], position[2], 1.0],
                 color: [color[0], color[1], color[2], 1.0],
                 viewproj: (proj * view).to_cols_array_2d(),
                 direction: [dir.into()[0], dir.into()[1], dir.into()[2], 1.0],
                 intensity,
                 cutoff_angle,
-                padding: Default::default(),
+                inner_angle: 5.0f32.to_radians(),
+                radius: 1.0,
             },
         }
     }
@@ -53,14 +53,14 @@ impl Light {
             id: 0,
             meta: LightMeta::Pointlight,
             data: RawLight {
-                ty: 1,
                 position: [position[0], position[1], position[2], 1.0],
                 color: [color[0], color[1], color[2], 1.0],
                 viewproj: Mat4::IDENTITY.to_cols_array_2d(),
                 direction: [1.0, 0.0, 0.0, 1.0],
                 intensity,
                 cutoff_angle: 0.0,
-                padding: Default::default(),
+                inner_angle: 0.0,
+                radius: 1.0,
             },
         }
     }
@@ -73,10 +73,10 @@ pub struct RawLight {
     pub color: [f32; 4],
     pub viewproj: [[f32; 4]; 4],
     pub direction: [f32; 4],
-    pub ty: u32,
     pub intensity: f32,
     pub cutoff_angle: f32,
-    pub padding: [u32; 1],
+    pub inner_angle: f32,
+    pub radius: f32,
 }
 
 pub struct LightManager {

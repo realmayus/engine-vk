@@ -74,9 +74,9 @@ vec3 evaluatePunctualLight(Light light, float roughness, vec3 f0, vec3 n, vec3 d
     vec3 posToLight = light.position.xyz - worldPos;
 
     float attenuation;
-//    attenuation  = getSquareFalloffAttenuation(posToLight, lightInvRadius);
-//    attenuation *= getSpotAngleAttenuation(l, lightDir, innerAngle, outerAngle);
-    attenuation = 1.0;
+    float invRadius = 1.0 / light.radius;
+    attenuation  = getSquareFalloffAttenuation(posToLight, invRadius);
+    attenuation *= getSpotAngleAttenuation(l, light.direction.xyz, light.inner_angle, light.outer_angle);
 
     vec3 luminance = (BSDF(light, roughness, f0, n, diffuseColor, l) * light.intensity * attenuation * NoL) * vec3(1.0, 1.0, 1.0); // = * light color
     return luminance;

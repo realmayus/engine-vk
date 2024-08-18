@@ -22,6 +22,23 @@ impl World {
     }
 
     pub fn add_model(&mut self, mut model: Model) -> ModelId {
+        if let Some(x) = model.light {
+            let child = Model::new(
+                vec![],
+                Mat4::IDENTITY,
+                None,
+                Some(Billboard {
+                    center: Vec4::ZERO,
+                    size: Vec2::from([0.1, 0.1]),
+                    uvs: [Vec2::ZERO; 4],
+                    material: 0,
+                }),
+                None,
+            );
+            let child = self.add_model(child);
+            model.children.push(child);
+        }
+
         let id = self.next_free_id();
         model.id = id;
         self.models.insert(id, model);
@@ -80,6 +97,11 @@ impl World {
                 ctx,
             );
         }
+
+        if let Some(billboard) = &mut model.billboard {
+            billboard.center = transform.w_axis;
+        }
+
         for child in model.children.clone().as_slice() {
             self.update_transforms(*child, transform, light_manager, ctx);
         }

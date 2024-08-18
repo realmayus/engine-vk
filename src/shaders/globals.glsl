@@ -37,10 +37,10 @@ struct Light {
     vec4 color;
     mat4 modelview; // only for spotlights; identity matrix for point lights
     vec4 direction;
-    uint type;  // 0 - spotlight, 1 - point light
     float intensity;
-    float cutoff_angle;
-    // uint shadow_map; // texture index
+    float outer_angle;
+    float inner_angle;
+    float radius;
 };
 
 layout(buffer_reference, scalar) readonly buffer LightBuffer {
