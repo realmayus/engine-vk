@@ -232,7 +232,6 @@ impl GltfReader {
                     albedo,
                     metallic: pbr.metallic_factor(),
                     roughness: pbr.roughness_factor(),
-                    padding: 0.0,
                 }),
                 ctx,
             )

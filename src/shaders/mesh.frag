@@ -7,7 +7,6 @@
 layout (location = 0) in vec3 worldPos;
 layout (location = 1) in vec2 texCoords;
 layout (location = 2) in vec3 normal;
-layout (location = 3) in mat4 normalMatrix;
 layout (location = 0) out vec4 outFragColor;
 
 layout( push_constant ) uniform constants {
@@ -105,8 +104,8 @@ void main() {
     }
 
     vec3 ambient = vec3(0.03, 0.03, 0.03);
-    acc += diffuseColor * ambient;
 
+    acc += baseColor * ambient;
     outFragColor = vec4(acc, 1.0);
 
 }

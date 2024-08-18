@@ -1,8 +1,9 @@
 use crate::resource::image::AllocatedImage;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{update_set, AllocUsage, Allocator, DescriptorImageWriteInfo};
+use crate::util::transition_image;
 use ash::{vk, Device};
-use log::{debug, info};
+use log::debug;
 use std::mem;
 
 pub type SamplerId = usize;
@@ -32,7 +33,7 @@ impl Texture {
             &mut ctx.allocator.borrow_mut(),
             extent,
             format,
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED,
             AllocUsage::GpuOnly,
             vk::ImageAspectFlags::COLOR,
             vk::ImageCreateFlags::empty(),
@@ -50,6 +51,7 @@ impl Texture {
         }
     }
 
+    /// Replaces the image data with the given data. Creates a new AllocatedImage and destroys the old one.
     pub fn replace_image(&mut self, ctx: &mut SubmitContext, label: Option<String>, data: &[u8], extent: vk::Extent3D) {
         let img = AllocatedImage::new(
             &ctx.device,
@@ -69,6 +71,87 @@ impl Texture {
 
         old.destroy(&ctx.device, &mut ctx.allocator.borrow_mut());
     }
+
+    /// Takes a texture and blits it onto the current one at the given position. Doesn't perform any allocations.
+    pub fn patch(&mut self, ctx: SubmitContext, src: &Texture, pos: (i32, i32)) {
+        ctx.immediate_submit(Box::new(|ctx: &mut SubmitContext| {
+            transition_image(
+                &ctx.device,
+                ctx.cmd_buffer,
+                src.image.image,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            );
+            transition_image(
+                &ctx.device,
+                ctx.cmd_buffer,
+                self.image.image,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            );
+            let extent = vk::Extent3D {
+                width: src.image.extent.width,
+                height: src.image.extent.height,
+                depth: 1,
+            };
+            let src_offset = vk::Offset3D { x: 0, y: 0, z: 0 };
+            let dst_offset = vk::Offset3D { x: pos.0, y: pos.1, z: 0 };
+            let src_subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1);
+            let dst_subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .mip_level(0)
+                .base_array_layer(0)
+                .layer_count(1);
+            let blit = vk::ImageBlit::default()
+                .src_offsets([
+                    src_offset,
+                    vk::Offset3D {
+                        x: extent.width as i32,
+                        y: extent.height as i32,
+                        z: 1,
+                    },
+                ])
+                .dst_offsets([
+                    dst_offset,
+                    vk::Offset3D {
+                        x: extent.width as i32 + pos.0,
+                        y: extent.height as i32 + pos.1,
+                        z: 1,
+                    },
+                ])
+                .src_subresource(src_subresource)
+                .dst_subresource(dst_subresource);
+            unsafe {
+                ctx.device.cmd_blit_image(
+                    ctx.cmd_buffer,
+                    src.image.image,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    self.image.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[blit],
+                    vk::Filter::NEAREST,
+                );
+            }
+            transition_image(
+                &ctx.device,
+                ctx.cmd_buffer,
+                src.image.image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+            transition_image(
+                &ctx.device,
+                ctx.cmd_buffer,
+                self.image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        }));
+    }
 }
 
 pub struct TextureManager {
@@ -76,7 +159,7 @@ pub struct TextureManager {
     samplers: Vec<vk::Sampler>,
     descriptor_set: vk::DescriptorSet,
 }
-
+#[allow(dead_code)]
 impl TextureManager {
     pub const DEFAULT_SAMPLER_NEAREST: SamplerId = 0;
     pub const DEFAULT_SAMPLER_LINEAR: SamplerId = 1;
@@ -210,15 +293,13 @@ impl TextureManager {
 
     pub fn free(&mut self, to_free: TextureId, device: &Device, allocator: &mut Allocator) {
         let texture = self.textures[to_free as usize].take().unwrap();
+        let label = texture.image.label.clone().unwrap_or_default();
         texture.image.destroy(device, allocator);
-        debug!("Freed texture {:?}", to_free);
+        debug!("Freed texture {} ({:?}) ", label, to_free);
     }
 
     pub fn next_free_id(&self) -> TextureId {
-        self.textures
-            .iter()
-            .position(|t| t.is_none())
-            .unwrap_or(self.textures.len() as usize) as TextureId
+        self.textures.iter().position(|t| t.is_none()).unwrap_or(self.textures.len()) as TextureId
     }
 
     pub fn descriptor_set(&self) -> vk::DescriptorSet {
@@ -262,7 +343,7 @@ impl TextureManager {
                 .filter(|t| t.is_some())
                 .map(|texture| DescriptorImageWriteInfo {
                     binding: 2,
-                    array_index: texture.as_ref().unwrap().id as u32,
+                    array_index: texture.as_ref().unwrap().id,
                     image_view: texture.as_ref().unwrap().image.view,
                     sampler: self.samplers[texture.as_ref().unwrap().sampler],
                     layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,

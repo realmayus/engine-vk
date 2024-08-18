@@ -343,6 +343,7 @@ impl App {
         let device_features = vk::PhysicalDeviceFeatures::default().geometry_shader(true);
         let mut vk12_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
+            .scalar_block_layout(true)
             .descriptor_indexing(true)
             .runtime_descriptor_array(true)
             .descriptor_binding_partially_bound(true)

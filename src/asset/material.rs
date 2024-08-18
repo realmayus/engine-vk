@@ -87,14 +87,13 @@ impl Default for UnlitMaterial {
 }
 
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Pod, Zeroable, Copy, Clone, Debug, PartialEq)]
 pub struct PbrMaterial {
     pub albedo_tex: TextureId,             // 0 if no texture
     pub metallic_roughness_tex: TextureId, // 0 if no texture
     pub albedo: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
-    pub padding: f32,
 }
 
 impl Default for PbrMaterial {
@@ -105,7 +104,6 @@ impl Default for PbrMaterial {
             albedo: [1.0, 1.0, 1.0, 1.0],
             metallic: 0.0,
             roughness: 0.0,
-            padding: 0.0,
         }
     }
 }
@@ -127,7 +125,6 @@ impl MaterialManager {
                     albedo: [1.0, 1.0, 1.0, 1.0],
                     metallic: 0.0,
                     roughness: 0.0,
-                    padding: 0.0,
                 }),
                 ctx,
             )

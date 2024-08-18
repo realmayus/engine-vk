@@ -11,10 +11,9 @@ use crate::AppSettings;
 use crate::TextureManager;
 use crate::World;
 use crate::{util, MaterialManager};
-use egui::{RichText, TextBuffer, TextureFilter};
-use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
+use egui::{Align2, Color32, Rgba, RichText, TextBuffer, TextureFilter, Widget};
+use glam::{Mat4, Vec2, Vec4, Vec4Swizzles};
 use std::cell::RefCell;
-use std::ops::Mul;
 use std::rc::Rc;
 use std::sync::mpsc;
 
@@ -307,97 +306,112 @@ impl Gui {
                 });
             }
         });
-
-        egui::Window::new("Assets").show(&ctx, |ui| {
-            let texture_manager = texture_manager.borrow_mut();
-            ui.horizontal(|ui| {
-                ui.label("Textures");
-                if ui.button("Import").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Images", &["png", "jpg", "jpeg", "tga", "bmp"])
-                        .set_directory(std::env::current_dir().unwrap())
-                        .pick_file()
-                    {
-                        self.cmd_sender.send(Command::ImportTexture(path)).unwrap();
+        let pos = (ctx.screen_rect().size().x - 15.0, 15.0);
+        egui::Window::new("Assets")
+            .pivot(Align2::RIGHT_TOP)
+            .default_pos(pos)
+            .show(&ctx, |ui| {
+                let texture_manager = texture_manager.borrow_mut();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Textures").size(16.0));
+                    if ui.button("Import").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Images", &["png", "jpg", "jpeg", "tga", "bmp"])
+                            .set_directory(std::env::current_dir().unwrap())
+                            .pick_file()
+                        {
+                            self.cmd_sender.send(Command::ImportTexture(path)).unwrap();
+                        }
+                    }
+                });
+                self.image_lock = false;
+                for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
+                    ui.collapsing(
+                        format!("{} ({})", texture.image.label.clone().unwrap_or("Untitled".into()), texture.id),
+                        |ui| {
+                            ui.label(format!("Width: {}", texture.image.extent.width));
+                            ui.label(format!("Height: {}", texture.image.extent.height));
+                            ui.label(format!("Format: {:?}", texture.image.format));
+                            ui.label(format!("Sampler: {}", texture.sampler));
+                            if !self.image_lock {
+                                self.image_lock = true;
+                                self.image.ui(ui, texture);
+                            }
+                        },
+                    );
+                }
+                ui.separator();
+                ui.label(RichText::new("Materials").size(16.0));
+                let materials = material_manager.borrow().iter_materials().collect::<Vec<_>>();
+                for (mid, mlabel, material) in materials {
+                    match material {
+                        RawMaterial::Unlit(data) => {
+                            ui.collapsing(format!("Unlit {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
+                                ui.label(format!("Texture: {}", data.texture));
+                                ui.label(format!("Base color: {:?}", data.color));
+                            });
+                        }
+                        RawMaterial::Pbr(data) => {
+                            ui.collapsing(format!("PBR {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
+                                // allow setting texture in dropdown
+                                ui.label("Texture");
+                                let mut mat = data;
+                                let mut albedo = Color32::from(Rgba::from_rgba_premultiplied(
+                                    mat.albedo[0],
+                                    mat.albedo[1],
+                                    mat.albedo[2],
+                                    mat.albedo[3],
+                                ));
+                                observe!(
+                                    (mat, albedo),
+                                    {
+                                        egui::ComboBox::from_id_source("Texture")
+                                            .selected_text(
+                                                texture_manager
+                                                    .get_texture(mat.albedo_tex)
+                                                    .unwrap()
+                                                    .image
+                                                    .label
+                                                    .clone()
+                                                    .unwrap_or("Untitled".into()),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
+                                                    ui.selectable_value(
+                                                        &mut mat.albedo_tex,
+                                                        texture.id,
+                                                        texture.image.label.clone().unwrap_or("Untitled".into()),
+                                                    );
+                                                }
+                                            });
+                                        ui.horizontal(|ui| {
+                                            ui.label("Albedo");
+                                            ui.color_edit_button_srgba(&mut albedo);
+                                        });
+                                        ui.add(egui::Slider::new(&mut mat.metallic, 0.0..=1.0).text("Metallic"));
+                                        ui.add(egui::Slider::new(&mut mat.roughness, 0.0..=1.0).text("Roughness"));
+                                    },
+                                    |v| {
+                                        _submit_context.clone().immediate_submit(Box::new(|ctx| {
+                                            material_manager.borrow_mut().get_material_mut(mid).unwrap().update(
+                                                |m| {
+                                                    if let RawMaterial::Pbr(to_change) = m {
+                                                        to_change.metallic = mat.metallic;
+                                                        to_change.roughness = mat.roughness;
+                                                        to_change.albedo_tex = mat.albedo_tex;
+                                                        to_change.albedo = Rgba::from(albedo).to_rgba_unmultiplied();
+                                                    }
+                                                },
+                                                ctx,
+                                            );
+                                        }));
+                                    }
+                                );
+                            });
+                        }
                     }
                 }
             });
-            self.image_lock = false;
-            for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
-                ui.collapsing(
-                    format!("{} ({})", texture.image.label.clone().unwrap_or("Untitled".into()), texture.id),
-                    |ui| {
-                        ui.label(format!("Width: {}", texture.image.extent.width));
-                        ui.label(format!("Height: {}", texture.image.extent.height));
-                        ui.label(format!("Format: {:?}", texture.image.format));
-                        ui.label(format!("Sampler: {}", texture.sampler));
-                        if !self.image_lock {
-                            self.image_lock = true;
-                            self.image.ui(ui, texture);
-                        }
-                    },
-                );
-            }
-
-            ui.label("Materials");
-            let materials = material_manager.borrow().iter_materials().collect::<Vec<_>>();
-            for (mid, mlabel, material) in materials {
-                match material {
-                    RawMaterial::Unlit(data) => {
-                        ui.collapsing(format!("Unlit {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
-                            ui.label(format!("Texture: {}", data.texture));
-                            ui.label(format!("Base color: {:?}", data.color));
-                        });
-                    }
-                    RawMaterial::Pbr(data) => {
-                        ui.collapsing(format!("PBR {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
-                            // allow setting texture in dropdown
-                            ui.label("Texture");
-                            let mut mat_texture = data.albedo_tex;
-                            observe!(
-                                mat_texture,
-                                {
-                                    egui::ComboBox::from_id_source("Texture")
-                                        .selected_text(
-                                            texture_manager
-                                                .get_texture(mat_texture)
-                                                .unwrap()
-                                                .image
-                                                .label
-                                                .clone()
-                                                .unwrap_or("Untitled".into()),
-                                        )
-                                        .show_ui(ui, |ui| {
-                                            for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
-                                                ui.selectable_value(
-                                                    &mut mat_texture,
-                                                    texture.id,
-                                                    texture.image.label.clone().unwrap_or("Untitled".into()),
-                                                );
-                                            }
-                                        });
-                                },
-                                |v| {
-                                    _submit_context.clone().immediate_submit(Box::new(|ctx| {
-                                        material_manager.borrow_mut().get_material_mut(mid).unwrap().update(
-                                            |m| {
-                                                if let RawMaterial::Pbr(data) = m {
-                                                    data.albedo_tex = v;
-                                                }
-                                            },
-                                            ctx,
-                                        );
-                                    }));
-                                }
-                            );
-                            ui.label(format!("Base color: {:?}", data.albedo));
-                            ui.label(format!("Metallic factor: {}", data.metallic));
-                            ui.label(format!("Roughness factor: {}", data.roughness));
-                        });
-                    }
-                }
-            }
-        });
     }
     fn model_div(
         &self,

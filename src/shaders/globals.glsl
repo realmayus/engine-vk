@@ -1,7 +1,7 @@
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_scalar_block_layout : require
 
-
-layout(buffer_reference, std430) readonly buffer SceneDataBuffer {
+layout(buffer_reference, scalar) readonly buffer SceneDataBuffer {
     mat4 view;
     mat4 proj;
     mat4 viewproj;
@@ -11,7 +11,7 @@ layout(buffer_reference, std430) readonly buffer SceneDataBuffer {
     uint num_lights;
 };
 
-layout(buffer_reference, std430) readonly buffer PbrMaterial {
+layout(buffer_reference, scalar) readonly buffer PbrMaterial {
     uint albedo_tex;
     uint metallic_roughness_tex;
     vec4 albedo;
@@ -28,7 +28,7 @@ struct Vertex {
     vec4 color;
 };
 
-layout(buffer_reference, std430) readonly buffer VertexBuffer {
+layout(buffer_reference, scalar) readonly buffer VertexBuffer {
     Vertex vertices[];
 };
 
@@ -43,6 +43,6 @@ struct Light {
     // uint shadow_map; // texture index
 };
 
-layout(buffer_reference, std430) readonly buffer LightBuffer {
+layout(buffer_reference, scalar) readonly buffer LightBuffer {
     Light lights[];
 };

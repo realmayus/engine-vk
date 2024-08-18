@@ -357,30 +357,70 @@ impl EguiPipeline {
         ctx: SubmitContext,
         texture_manager: &mut TextureManager,
     ) {
-        let data = match &delta.image {
-            ImageData::Color(image) => image.pixels.iter().flat_map(|color| color.to_array()).collect::<Vec<_>>(),
-            ImageData::Font(image) => image.srgba_pixels(None).flat_map(|color| color.to_array()).collect::<Vec<_>>(),
+        let (data, is_color_img) = match &delta.image {
+            ImageData::Color(image) => (image.pixels.iter().flat_map(|color| color.to_array()).collect::<Vec<_>>(), true),
+            ImageData::Font(image) => (
+                image.srgba_pixels(None).flat_map(|color| color.to_array()).collect::<Vec<_>>(),
+                false,
+            ),
         };
-        ctx.immediate_submit(Box::new(|ctx| {
-            if let Some(texture_id) = self.textures.get(&egui_texture_id) {
-                debug!("Replacing egui texture");
-                texture_manager.texture_mut(*texture_id).replace_image(
-                    ctx,
-                    Some(format!("egui texture, id: {:?}", egui_texture_id)),
-                    data.as_slice(),
-                    vk::Extent3D {
-                        width: delta.image.width() as u32,
-                        height: delta.image.height() as u32,
-                        depth: 1,
-                    },
-                );
+        if let Some(texture_id) = self.textures.get(&egui_texture_id) {
+            debug!("Replacing egui texture");
+            if let Some([x, y]) = delta.pos {
+                let patch = ctx.clone().immediate_submit(Box::new(|ctx| {
+                    Texture::new(
+                        TextureManager::DEFAULT_SAMPLER_NEAREST,
+                        TEXTURE_IMAGE_FORMAT,
+                        ctx,
+                        Some(format!(
+                            "egui {} patch texture, id: {:?}",
+                            if is_color_img { "color" } else { "font" },
+                            egui_texture_id
+                        )),
+                        data.as_slice(),
+                        vk::Extent3D {
+                            width: delta.image.width() as u32,
+                            height: delta.image.height() as u32,
+                            depth: 1,
+                        },
+                        true,
+                    )
+                }));
+                texture_manager
+                    .texture_mut(*texture_id)
+                    .patch(ctx.clone(), &patch, (x as i32, y as i32));
+                patch.image.destroy(&ctx.device, &mut ctx.allocator.borrow_mut());
             } else {
-                debug!("Adding egui texture");
+                ctx.clone().immediate_submit(Box::new(|ctx| {
+                    texture_manager.texture_mut(*texture_id).replace_image(
+                        ctx,
+                        Some(format!(
+                            "egui {} texture, id: {:?}",
+                            if is_color_img { "color" } else { "font" },
+                            egui_texture_id
+                        )),
+                        data.as_slice(),
+                        vk::Extent3D {
+                            width: delta.image.width() as u32,
+                            height: delta.image.height() as u32,
+                            depth: 1,
+                        },
+                    );
+                }));
+            }
+        } else {
+            debug!("Adding egui texture");
+
+            ctx.clone().immediate_submit(Box::new(|ctx| {
                 let texture = Texture::new(
                     TextureManager::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
-                    Some(format!("egui texture, id: {:?}", egui_texture_id)),
+                    Some(format!(
+                        "egui {} texture, id: {:?}",
+                        if is_color_img { "color" } else { "font" },
+                        egui_texture_id
+                    )),
                     data.as_slice(),
                     vk::Extent3D {
                         width: delta.image.width() as u32,
@@ -391,8 +431,8 @@ impl EguiPipeline {
                 );
                 let id = texture_manager.add_texture(texture, &ctx.device, true);
                 self.textures.insert(egui_texture_id, id);
-            }
-        }))
+            }));
+        }
     }
 
     pub fn destroy(&mut self, device: &Device, allocator: &mut Allocator) {
