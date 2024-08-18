@@ -117,24 +117,29 @@ impl Gui {
                         self.cmd_sender.send(Command::ImportModel(path)).unwrap();
                     }
                 }
-            });
-            ui.menu_button("Add", |ui| {
-                if ui.button("Add Billboard").clicked() {
-                    let billboard = Billboard::new(
-                        Vec4::new(0.0, 0.0, 1.0, 0.0),
-                        Vec2::new(1.0, 1.0),
-                        [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)],
-                        MaterialManager::DEFAULT_MATERIAL,
-                    );
-                    let model = Model::new(Vec::new(), Mat4::IDENTITY, None, Some(billboard), Some("Untitled Billboard".into()));
-                    let added = world.borrow_mut().add_model(model);
-                    println!(
-                        "Added billboard: {}, world's billboards: {:?}",
-                        added,
-                        world.borrow().get_billboards()
-                    );
+
+                ui.menu_button("Add", |ui| {
+                    if ui.button("Add Billboard").clicked() {
+                        let billboard = Billboard::new(
+                            Vec4::new(0.0, 0.0, 1.0, 1.0),
+                            Vec2::new(1.0, 1.0),
+                            [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)],
+                            MaterialManager::DEFAULT_MATERIAL,
+                        );
+                        let model = Model::new(Vec::new(), Mat4::IDENTITY, None, Some(billboard), Some("Untitled Billboard".into()));
+                        let added = world.borrow_mut().add_model(model);
+                        println!(
+                            "Added billboard: {}, world's billboards: {:?}",
+                            added,
+                            world.borrow().get_billboards()
+                        );
+                    }
+                });
+                if ui.button("Reload Shaders").clicked() {
+                    self.cmd_sender.send(Command::ReloadShaders).unwrap();
                 }
             });
+
             ui.checkbox(&mut app_settings.show_grid, "Show grid");
             egui::CollapsingHeader::new("Camera".as_str()).show(ui, |ui| {
                 observe!(
@@ -165,7 +170,8 @@ impl Gui {
                 self.model_div(
                     ui,
                     model,
-                    &mut world.borrow_mut(),
+                    world.clone(),
+                    material_manager.clone(),
                     &mut light_manager.borrow_mut(),
                     _submit_context.clone(),
                 );
@@ -268,11 +274,11 @@ impl Gui {
                             )
                             .show_ui(ui, |ui| {
                                 let material_manager = material_manager.borrow();
-                                for material in material_manager.iter_materials() {
+                                for (mid, mlabel, _) in material_manager.iter_materials() {
                                     ui.selectable_value(
                                         &mut world.borrow_mut().models.get_mut(&id).unwrap().billboard.as_mut().unwrap().material,
-                                        material.id,
-                                        material.label.clone().unwrap_or("Untitled".into()),
+                                        mid,
+                                        mlabel.clone().unwrap_or("Untitled".into()),
                                     );
                                 }
                             });
@@ -304,9 +310,20 @@ impl Gui {
 
         egui::Window::new("Assets").show(&ctx, |ui| {
             let texture_manager = texture_manager.borrow_mut();
-            ui.label("Textures");
+            ui.horizontal(|ui| {
+                ui.label("Textures");
+                if ui.button("Import").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "tga", "bmp"])
+                        .set_directory(std::env::current_dir().unwrap())
+                        .pick_file()
+                    {
+                        self.cmd_sender.send(Command::ImportTexture(path)).unwrap();
+                    }
+                }
+            });
             self.image_lock = false;
-            for texture in texture_manager.iter_textures() {
+            for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
                 ui.collapsing(
                     format!("{} ({})", texture.image.label.clone().unwrap_or("Untitled".into()), texture.id),
                     |ui| {
@@ -323,36 +340,76 @@ impl Gui {
             }
 
             ui.label("Materials");
-            let material_manager = material_manager.borrow();
-            for material in material_manager.iter_materials() {
-                match material.data {
+            let materials = material_manager.borrow().iter_materials().collect::<Vec<_>>();
+            for (mid, mlabel, material) in materials {
+                match material {
                     RawMaterial::Unlit(data) => {
-                        ui.collapsing(
-                            format!("Unlit {} ({})", material.label.clone().unwrap_or("Untitled".into()), material.id),
-                            |ui| {
-                                ui.label(format!("Texture: {}", data.texture));
-                                ui.label(format!("Base color: {:?}", data.color));
-                            },
-                        );
+                        ui.collapsing(format!("Unlit {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
+                            ui.label(format!("Texture: {}", data.texture));
+                            ui.label(format!("Base color: {:?}", data.color));
+                        });
                     }
                     RawMaterial::Pbr(data) => {
-                        ui.collapsing(
-                            format!("PBR {} ({})", material.label.clone().unwrap_or("Untitled".into()), material.id),
-                            |ui| {
-                                ui.label(format!("Texture: {}", data.texture));
-                                ui.label(format!("Base color: {:?}", data.albedo));
-                                ui.label(format!("Metallic factor: {}", data.metallic));
-                                ui.label(format!("Roughness factor: {}", data.roughness));
-                            },
-                        );
+                        ui.collapsing(format!("PBR {} ({})", mlabel.clone().unwrap_or("Untitled".into()), mid), |ui| {
+                            // allow setting texture in dropdown
+                            ui.label("Texture");
+                            let mut mat_texture = data.albedo_tex;
+                            observe!(
+                                mat_texture,
+                                {
+                                    egui::ComboBox::from_id_source("Texture")
+                                        .selected_text(
+                                            texture_manager
+                                                .get_texture(mat_texture)
+                                                .unwrap()
+                                                .image
+                                                .label
+                                                .clone()
+                                                .unwrap_or("Untitled".into()),
+                                        )
+                                        .show_ui(ui, |ui| {
+                                            for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
+                                                ui.selectable_value(
+                                                    &mut mat_texture,
+                                                    texture.id,
+                                                    texture.image.label.clone().unwrap_or("Untitled".into()),
+                                                );
+                                            }
+                                        });
+                                },
+                                |v| {
+                                    _submit_context.clone().immediate_submit(Box::new(|ctx| {
+                                        material_manager.borrow_mut().get_material_mut(mid).unwrap().update(
+                                            |m| {
+                                                if let RawMaterial::Pbr(data) = m {
+                                                    data.albedo_tex = v;
+                                                }
+                                            },
+                                            ctx,
+                                        );
+                                    }));
+                                }
+                            );
+                            ui.label(format!("Base color: {:?}", data.albedo));
+                            ui.label(format!("Metallic factor: {}", data.metallic));
+                            ui.label(format!("Roughness factor: {}", data.roughness));
+                        });
                     }
                 }
             }
         });
     }
-    fn model_div(&self, ui: &mut egui::Ui, model: ModelId, world: &mut World, light_manager: &mut LightManager, ctx: SubmitContext) {
+    fn model_div(
+        &self,
+        ui: &mut egui::Ui,
+        model: ModelId,
+        world: Rc<RefCell<World>>,
+        material_manager: Rc<RefCell<MaterialManager>>,
+        light_manager: &mut LightManager,
+        ctx: SubmitContext,
+    ) {
         let model_name = {
-            let model = &world.models[&model];
+            let model = &world.borrow().models[&model];
             let model_name = format!("Untitled ({})", model.id);
             model
                 .label
@@ -368,22 +425,22 @@ impl Gui {
                 }
             });
             observe!(
-                world.models[&model].transform.w_axis,
+                world.borrow().models[&model].transform.w_axis,
                 {
                     ui.horizontal(|ui| {
                         ui.label("Position");
                         ui.add(
-                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.x)
+                            egui::DragValue::new(&mut world.borrow_mut().models.get_mut(&model).unwrap().transform.w_axis.x)
                                 .speed(0.01)
                                 .prefix("X: "),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.y)
+                            egui::DragValue::new(&mut world.borrow_mut().models.get_mut(&model).unwrap().transform.w_axis.y)
                                 .speed(0.01)
                                 .prefix("Y: "),
                         );
                         ui.add(
-                            egui::DragValue::new(&mut world.models.get_mut(&model).unwrap().transform.w_axis.z)
+                            egui::DragValue::new(&mut world.borrow_mut().models.get_mut(&model).unwrap().transform.w_axis.z)
                                 .speed(0.01)
                                 .prefix("Z: "),
                         );
@@ -391,27 +448,57 @@ impl Gui {
                 },
                 |_v| {
                     ctx.clone().immediate_submit(Box::new(|ctx| {
-                        world.update_transforms(model, glam::Mat4::IDENTITY, light_manager, ctx)
+                        world
+                            .borrow_mut()
+                            .update_transforms(model, glam::Mat4::IDENTITY, light_manager, ctx)
                     }));
                 }
             );
             ui.label("Meshes");
-            let model = &world.models[&model];
-            let light = model.light.clone();
-            for (i, mesh) in model.meshes.iter().enumerate() {
-                self.mesh_div(ui, mesh, format!("Mesh {}", i));
+            let children = {
+                let mut world = world.borrow_mut();
+
+                let model = world.models.get_mut(&model).unwrap();
+                for (i, mesh) in model.meshes.iter_mut().enumerate() {
+                    self.mesh_div(ui, mesh, format!("Mesh {}", i), material_manager.clone());
+                }
+                model.children.clone()
+            };
+            for child in children {
+                self.model_div(ui, child, world.clone(), material_manager.clone(), light_manager, ctx.clone());
             }
-            for child in model.children.clone().as_slice() {
-                self.model_div(ui, *child, world, light_manager, ctx.clone());
-            }
-            ui.label(format!("Light: {:?}", light));
         });
     }
 
-    fn mesh_div(&self, ui: &mut egui::Ui, mesh: &crate::scene::mesh::Mesh, name: String) {
+    fn mesh_div(
+        &self,
+        ui: &mut egui::Ui,
+        mesh: &mut crate::scene::mesh::Mesh,
+        name: String,
+        material_manager: Rc<RefCell<MaterialManager>>,
+    ) {
         ui.collapsing(name, |ui| {
             ui.label(format!("#V / #I: {} / {}", mesh.vertices.len(), mesh.indices.len()));
-            ui.label(format!("Material: {}", mesh.material));
+
+            ui.horizontal(|ui| {
+                ui.label("Material");
+                egui::ComboBox::from_id_source("Material")
+                    .selected_text(
+                        material_manager
+                            .borrow()
+                            .get_material(mesh.material)
+                            .unwrap()
+                            .label
+                            .clone()
+                            .unwrap_or("Untitled".into()),
+                    )
+                    .show_ui(ui, |ui| {
+                        let material_manager = material_manager.borrow();
+                        for (mid, mlabel, _) in material_manager.iter_materials() {
+                            ui.selectable_value(&mut mesh.material, mid, mlabel.clone().unwrap_or("Untitled".into()));
+                        }
+                    });
+            });
         });
     }
 }

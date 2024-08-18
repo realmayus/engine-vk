@@ -3,6 +3,7 @@ pub mod egui;
 pub mod grid;
 pub mod mesh;
 
+use crate::asset::texture::TEXTURE_IMAGE_FORMAT;
 use crate::{DEPTH_FORMAT, SWAPCHAIN_IMAGE_FORMAT};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
@@ -66,7 +67,7 @@ impl Default for PipelineBuilder<'_> {
             rasterization: vk::PipelineRasterizationStateCreateInfo::default()
                 .polygon_mode(vk::PolygonMode::FILL)
                 .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::CLOCKWISE)
+                .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                 .line_width(1.0),
             color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
                 .blend_enable(false)
@@ -89,7 +90,7 @@ impl Default for PipelineBuilder<'_> {
                 .min_depth_bounds(0.0)
                 .max_depth_bounds(1.0),
             render_info: vk::PipelineRenderingCreateInfo::default()
-                .color_attachment_formats(&[SWAPCHAIN_IMAGE_FORMAT])
+                .color_attachment_formats(&[TEXTURE_IMAGE_FORMAT])
                 .depth_attachment_format(DEPTH_FORMAT),
         }
     }

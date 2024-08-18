@@ -9,7 +9,10 @@ categories = ["game-engines", "graphics"]
 license = "LGPL-2"
 keywords = ["vulkan", "game-engine", "graphics", "game", "engine"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["watch"]
+watch = ["notify"]
+
 
 [dependencies]
 ash = { version = "0.38.0", features = ["linked"] }
@@ -27,6 +30,10 @@ egui-winit = "0.27.2"
 egui = "0.27.2"
 hashbrown = "0.14.3"
 rfd = "0.14.1"
+image = "0.25.2"
+
+# optional crates
+notify = { version = "6.1.1", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 raw-window-metal = "0.4.0"

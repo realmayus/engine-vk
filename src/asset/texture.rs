@@ -2,7 +2,7 @@ use crate::resource::image::AllocatedImage;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{update_set, AllocUsage, Allocator, DescriptorImageWriteInfo};
 use ash::{vk, Device};
-use log::info;
+use log::{debug, info};
 use std::mem;
 
 pub type SamplerId = usize;
@@ -11,6 +11,7 @@ pub type TextureId = u32;
 #[derive(Debug)]
 pub struct Texture {
     pub id: TextureId,
+    pub internal: bool,
     pub image: AllocatedImage,
     pub sampler: SamplerId,
     pub data: Vec<u8>,
@@ -24,6 +25,7 @@ impl Texture {
         label: Option<String>,
         data: &[u8],
         extent: vk::Extent3D,
+        internal: bool,
     ) -> Self {
         let img = AllocatedImage::new(
             &ctx.device,
@@ -44,6 +46,7 @@ impl Texture {
             id: 0,
             sampler,
             data: Vec::from(data),
+            internal,
         }
     }
 
@@ -136,6 +139,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
+                    false,
                 ),
                 &ctx.device,
                 false,
@@ -155,6 +159,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
+                    false,
                 ),
                 &ctx.device,
                 false,
@@ -174,6 +179,7 @@ impl TextureManager {
                         height: 16,
                         depth: 1,
                     },
+                    false,
                 ),
                 &ctx.device,
                 false,
@@ -193,6 +199,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
+                    false,
                 ),
                 &ctx.device,
                 true,
@@ -204,7 +211,7 @@ impl TextureManager {
     pub fn free(&mut self, to_free: TextureId, device: &Device, allocator: &mut Allocator) {
         let texture = self.textures[to_free as usize].take().unwrap();
         texture.image.destroy(device, allocator);
-        info!("Freed texture {:?}", to_free);
+        debug!("Freed texture {:?}", to_free);
     }
 
     pub fn next_free_id(&self) -> TextureId {
@@ -219,7 +226,6 @@ impl TextureManager {
     }
 
     pub fn iter_textures(&self) -> impl Iterator<Item = &Texture> {
-        //only iter over textures that are Some
         self.textures.iter().filter_map(|t| t.as_ref())
     }
 
@@ -236,6 +242,10 @@ impl TextureManager {
             self.update_set(device);
         }
         id
+    }
+
+    pub fn get_texture(&self, id: TextureId) -> Option<&Texture> {
+        self.textures[id as usize].as_ref()
     }
 
     pub fn add_sampler(&mut self, sampler: vk::Sampler) {

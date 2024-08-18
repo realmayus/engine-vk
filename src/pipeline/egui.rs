@@ -12,8 +12,10 @@ use crate::asset::texture::{Texture, TextureId, TextureManager};
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use hashbrown::HashMap;
+use image::EncodableLayout;
 use log::debug;
 use std::ffi::CStr;
+use std::fs;
 use winit::window::Window;
 
 type EguiTextureId = egui::TextureId;
@@ -60,10 +62,10 @@ impl EguiPipeline {
         window: &Window,
         submit_context: SubmitContext,
     ) -> Self {
-        let vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/egui.vert.spv")).expect("Failed to load vertex shader module");
-        let fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/egui.frag.spv")).expect("Failed to load fragment shader module");
+        let vertex_shader = load_shader_module(device, fs::read("src/shaders/spirv/egui.vert.spv").unwrap().as_bytes())
+            .expect("Failed to load vertex shader module");
+        let fragment_shader = load_shader_module(device, fs::read("src/shaders/spirv/egui.frag.spv").unwrap().as_bytes())
+            .expect("Failed to load fragment shader module");
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)
@@ -95,7 +97,7 @@ impl EguiPipeline {
                     .module(fragment_shader)
                     .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
             ],
-            render_info: vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&[vk::Format::B8G8R8A8_UNORM]),
+            render_info: vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&[vk::Format::R8G8B8A8_UNORM]),
             ..Default::default()
         };
 
@@ -385,6 +387,7 @@ impl EguiPipeline {
                         height: delta.image.height() as u32,
                         depth: 1,
                     },
+                    true,
                 );
                 let id = texture_manager.add_texture(texture, &ctx.device, true);
                 self.textures.insert(egui_texture_id, id);
@@ -393,9 +396,6 @@ impl EguiPipeline {
     }
 
     pub fn destroy(&mut self, device: &Device, allocator: &mut Allocator) {
-        unsafe {
-            device.destroy_descriptor_set_layout(self.bindless_set_layout, None);
-        }
         for buf in self.mesh_buffers.drain(..) {
             buf.0.destroy(device, allocator);
             buf.1.destroy(device, allocator);

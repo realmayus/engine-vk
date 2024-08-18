@@ -50,7 +50,7 @@ impl AllocatedBuffer {
         size: DeviceSize,
         label: Option<String>,
     ) -> Self {
-        debug_assert!(size > 0);
+        assert!(size > 0);
         let usage_flags = buffer_usages | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST;
         let info = vk::BufferCreateInfo::default().size(size).usage(usage_flags); // we want to resize almost all buffers, and there's no performance penalty, really...
         let buffer = unsafe { device.create_buffer(&info, None) }.unwrap();

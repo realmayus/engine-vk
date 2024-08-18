@@ -3,7 +3,9 @@ use crate::pipeline::PipelineBuilder;
 use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
+use image::EncodableLayout;
 use std::ffi::CStr;
+use std::fs;
 
 pub struct GridPipeline {
     viewport: vk::Viewport,
@@ -20,10 +22,10 @@ struct PushConstants {
 
 impl GridPipeline {
     pub fn new(device: &ash::Device, window_size: (u32, u32), deletion_queue: &mut DeletionQueue) -> Self {
-        let vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/grid.vert.spv")).expect("Failed to load vertex shader module");
-        let fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/grid.frag.spv")).expect("Failed to load fragment shader module");
+        let vertex_shader = load_shader_module(device, fs::read("src/shaders/spirv/grid.vert.spv").unwrap().as_bytes())
+            .expect("Failed to load vertex shader module");
+        let fragment_shader = load_shader_module(device, fs::read("src/shaders/spirv/grid.frag.spv").unwrap().as_bytes())
+            .expect("Failed to load fragment shader module");
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)

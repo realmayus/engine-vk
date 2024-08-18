@@ -44,11 +44,11 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
-        Mat4::look_at_rh(self.position, self.target, Self::UP)
+        Mat4::look_at_lh(self.position, self.target, Self::UP)
     }
 
     pub fn proj(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fov.to_radians(), self.extent.0 / self.extent.1, Self::NEAR, Self::FAR)
+        Mat4::perspective_lh(self.fov.to_radians(), self.extent.0 / self.extent.1, Self::NEAR, Self::FAR)
     }
 
     pub fn on_mouse_move(&mut self, delta: (f32, f32)) {
@@ -62,7 +62,7 @@ impl Camera {
                 y_angle = 0.0;
             }
 
-            let rot_mat_x = Mat4::from_axis_angle(-Self::UP, x_angle);
+            let rot_mat_x = Mat4::from_axis_angle(-Self::UP, -x_angle);
             self.position = ((rot_mat_x * Vec4::from(((self.position - self.target), 1.0))) + Vec4::from((self.target, 1.0))).xyz();
             let rot_mat_y = Mat4::from_axis_angle(view_dir.cross(Self::UP), y_angle);
             self.position = ((rot_mat_y * Vec4::from(((self.position - self.target), 1.0))) + Vec4::from((self.target, 1.0))).xyz();

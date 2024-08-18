@@ -1,41 +1,22 @@
 const float PI = 3.14159265359;
 
-float DistributionGGX(vec3 N, vec3 H, float roughness)
-{
-    float a      = roughness*roughness;
-    float a2     = a*a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH*NdotH;
-
-    float num   = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-
-    return num / denom;
+float D_GGX(float NoH, float a) {
+    float a2 = a * a;
+    float f = (NoH * a2 - NoH) * NoH + 1.0;
+    return a2 / (PI * f * f);
 }
 
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = (roughness + 1.0);
-    float k = (r*r) / 8.0;
-
-    float num   = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-
-    return num / denom;
-}
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2  = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1  = GeometrySchlickGGX(NdotL, roughness);
-
-    return ggx1 * ggx2;
+vec3 F_Schlick(float u, vec3 f0) {
+    return f0 + (vec3(1.0) - f0) * pow(1.0 - u, 5.0);
 }
 
+float V_SmithGGXCorrelated(float NoV, float NoL, float a) {
+    float a2 = a * a;
+    float GGXL = NoV * sqrt((-NoL * a2 + NoL) * NoL + a2);
+    float GGXV = NoL * sqrt((-NoV * a2 + NoV) * NoV + a2);
+    return 0.5 / (GGXV + GGXL);
+}
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+float Fd_Lambert() {
+    return 1.0 / PI;
 }

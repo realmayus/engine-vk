@@ -44,12 +44,27 @@ impl Material {
         }
     }
 
+    pub fn update(&mut self, f: impl FnOnce(&mut RawMaterial), ctx: &mut SubmitContext) {
+        f(&mut self.data);
+        let cleanup = match self.data {
+            RawMaterial::Unlit(unlit) => self
+                .buffer
+                .write(&[unlit], 0, &ctx.device, &mut ctx.allocator.borrow_mut(), ctx.cmd_buffer),
+            RawMaterial::Pbr(pbr) => self
+                .buffer
+                .write(&[pbr], 0, &ctx.device, &mut ctx.allocator.borrow_mut(), ctx.cmd_buffer),
+        };
+        ctx.add_cleanup(Box::new(move |device, allocator| {
+            cleanup(device, allocator);
+        }));
+    }
+
     pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
         self.buffer.device_address(device)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RawMaterial {
     Unlit(UnlitMaterial),
     Pbr(PbrMaterial),
@@ -74,8 +89,9 @@ impl Default for UnlitMaterial {
 #[repr(C)]
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 pub struct PbrMaterial {
+    pub albedo_tex: TextureId,             // 0 if no texture
+    pub metallic_roughness_tex: TextureId, // 0 if no texture
     pub albedo: [f32; 4],
-    pub texture: TextureId, // 0 if no texture
     pub metallic: f32,
     pub roughness: f32,
     pub padding: f32,
@@ -84,7 +100,8 @@ pub struct PbrMaterial {
 impl Default for PbrMaterial {
     fn default() -> Self {
         Self {
-            texture: 0,
+            albedo_tex: 0,
+            metallic_roughness_tex: 0,
             albedo: [1.0, 1.0, 1.0, 1.0],
             metallic: 0.0,
             roughness: 0.0,
@@ -105,7 +122,8 @@ impl MaterialManager {
             Material::new(
                 Some("Default material".into()),
                 RawMaterial::Pbr(PbrMaterial {
-                    texture: TextureManager::DEFAULT_TEXTURE_WHITE,
+                    albedo_tex: TextureManager::DEFAULT_TEXTURE_WHITE,
+                    metallic_roughness_tex: TextureManager::DEFAULT_TEXTURE_WHITE,
                     albedo: [1.0, 1.0, 1.0, 1.0],
                     metallic: 0.0,
                     roughness: 0.0,
@@ -128,8 +146,10 @@ impl MaterialManager {
         self.max_id - 1
     }
 
-    pub fn iter_materials(&self) -> impl Iterator<Item = &Material> {
-        self.materials.values()
+    pub fn iter_materials(&self) -> impl Iterator<Item = (MaterialId, Option<String>, RawMaterial)> + '_ {
+        self.materials
+            .iter()
+            .map(|(id, material)| (id.clone(), material.label.clone(), material.data.clone()))
     }
 
     pub fn next_free_id(&self) -> MaterialId {

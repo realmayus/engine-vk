@@ -30,7 +30,7 @@ void main()
     outUV.y = v.uv_y;
     mat4 normal_matrix = transpose(inverse(PushConstants.transform));
     mat4 normal_matrix2 = transpose(inverse(sceneData.view * PushConstants.transform));
-//    normal_matrix2[1] *= -1.0;
+    normal_matrix2[1] *= -1.0;
     outNormalMatrix = normal_matrix2;
     outNormal = (normal_matrix * vec4(v.normal, 1.0)).xyz;
 }

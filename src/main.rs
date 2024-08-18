@@ -22,9 +22,11 @@ use crate::commands::{Command, CommandHandler};
 use crate::gltf::GltfReader;
 use crate::pipeline::billboard::BillboardPipeline;
 use asset::texture::TextureManager;
+use glam::{Mat4, Vec4};
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::device_properties;
 use log::{debug, info};
+use notify::Watcher;
 use pipeline::GpuSceneData;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use resource::buffer::{AllocatedBuffer, WrappedBuffer};
@@ -92,6 +94,8 @@ struct App {
     settings: AppSettings,
     gui: Gui,
     cmd_sender: mpsc::Sender<Command>,
+    bindless_set_layout: DescriptorSetLayout,
+    pipeline_deletion_queue: DeletionQueue,
 }
 
 struct AppSettings {
@@ -148,7 +152,6 @@ impl App {
             Self::init_commands(graphics_queue.1, &device, &mut deletion_queue);
         let (bindless_descriptor_pool, bindless_descriptor_set, bindless_set_layout) = Self::init_bindless(&device);
         let grid_pipeline = GridPipeline::new(&device, window_size, &mut deletion_queue);
-        let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
         let mut scene_data_buffer = WrappedBuffer {
             dirty: false,
             buffer: AllocatedBuffer::new(
@@ -182,23 +185,6 @@ impl App {
         )
         .immediate_submit(Box::new(|ctx| scene_data_buffer.write(ctx)));
 
-        let egui_pipeline = EguiPipeline::new(
-            &device,
-            window_size,
-            &mut deletion_queue,
-            bindless_set_layout,
-            &window,
-            SubmitContext::new(
-                device.clone(),
-                allocator.clone(),
-                immediate_fence,
-                immediate_command_buffer,
-                graphics_queue.0,
-            ),
-        );
-
-        let billboard_pipeline = BillboardPipeline::new(&device, window_size, &mut deletion_queue, bindless_set_layout);
-
         let texture_manager = SubmitContext::new(
             device.clone(),
             allocator.clone(),
@@ -220,6 +206,25 @@ impl App {
 
         let camera = camera::Camera::new(window_size.0 as f32, window_size.1 as f32);
 
+        let mut pipeline_deletion_queue = DeletionQueue::default();
+
+        let mesh_pipeline = MeshPipeline::new(&device, window_size, &mut pipeline_deletion_queue, bindless_set_layout);
+        let egui_pipeline = EguiPipeline::new(
+            &device,
+            window_size,
+            &mut pipeline_deletion_queue,
+            bindless_set_layout,
+            &window,
+            SubmitContext::new(
+                device.clone(),
+                allocator.clone(),
+                immediate_fence,
+                immediate_command_buffer,
+                graphics_queue.0,
+            ),
+        );
+        let billboard_pipeline = BillboardPipeline::new(&device, window_size, &mut pipeline_deletion_queue, bindless_set_layout);
+
         info!("Init done.");
 
         Ok(App {
@@ -239,10 +244,12 @@ impl App {
             window,
             window_size,
             allocator,
+            pipeline_deletion_queue,
             main_deletion_queue: deletion_queue,
             draw_image: Some(draw_image), // must be present at all times, Option<_> because we need ownership when destroying
             unorm_draw_image_view,
             depth_image: Some(depth_image),
+            bindless_set_layout,
             bindless_descriptor_pool,
             mesh_pipeline,
             egui_pipeline,
@@ -264,6 +271,44 @@ impl App {
             world: Rc::new(RefCell::new(World::default())),
             cmd_sender,
         })
+    }
+
+    fn recreate_pipelines(&mut self) {
+        unsafe {
+            self.device.device_wait_idle().unwrap();
+        }
+        self.pipeline_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
+        self.egui_pipeline.destroy(&self.device, &mut self.allocator.borrow_mut());
+
+        self.mesh_pipeline = MeshPipeline::new(
+            &self.device,
+            self.window_size,
+            &mut self.pipeline_deletion_queue,
+            self.bindless_set_layout,
+        );
+
+        self.egui_pipeline = EguiPipeline::new(
+            &self.device,
+            self.window_size,
+            &mut self.pipeline_deletion_queue,
+            self.bindless_set_layout,
+            &self.window,
+            SubmitContext::new(
+                self.device.clone(),
+                self.allocator.clone(),
+                self.immediate_fence,
+                self.immediate_command_buffer,
+                self.graphics_queue.0,
+            ),
+        );
+
+        self.billboard_pipeline = BillboardPipeline::new(
+            &self.device,
+            self.window_size,
+            &mut self.pipeline_deletion_queue,
+            self.bindless_set_layout,
+        );
+        self.resize(self.window_size);
     }
 
     /// Pick the first physical device that supports graphics and presentation queue families.
@@ -627,6 +672,7 @@ impl App {
         debug!("Resizing to {:?}", size);
         self.resize_swapchain(size);
         self.mesh_pipeline.resize(size);
+        self.billboard_pipeline.resize(size);
         self.egui_pipeline.resize(size);
         self.grid_pipeline.resize(size);
         self.camera.resize(size.0 as f32, size.1 as f32);
@@ -667,7 +713,6 @@ impl App {
         self.unorm_draw_image_view = unorm_draw_image_view;
     }
 
-    // https://i.imgflip.com/8l3uzz.jpg
     fn current_frame(&self) -> &FrameData {
         &self.frames[(self.current_frame % FRAME_OVERLAP as u32) as usize]
     }
@@ -743,7 +788,6 @@ impl App {
                 &self.material_manager.borrow(),
                 &self.light_manager.borrow(),
             );
-
             {
                 let world = self.world.borrow();
                 let billboards = world.get_billboards();
@@ -962,6 +1006,7 @@ impl App {
         }
         if self.scene_data.dirty {
             SubmitContext::from_app(self).immediate_submit(Box::new(|ctx| self.scene_data.write(ctx)));
+            self.scene_data.dirty = false;
         }
     }
 }
@@ -971,8 +1016,10 @@ impl Drop for App {
         unsafe {
             self.device.device_wait_idle().unwrap();
             self.main_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
+            self.pipeline_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
             self.device.destroy_descriptor_pool(self.bindless_descriptor_pool, None);
             self.world.borrow_mut().destroy(&self.device, &mut self.allocator.borrow_mut());
+            self.device.destroy_descriptor_set_layout(self.bindless_set_layout, None);
 
             self.device.destroy_image_view(self.unorm_draw_image_view, None);
             self.draw_image
@@ -1020,13 +1067,27 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.material_manager.clone(),
         app.light_manager.clone(),
     );
-    gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
+    gltf_loader.load(Path::new("assets/cube.glb"), ctx);
+
+    // todo restrict to "watch" feature
+    let (watch_tx, watch_rx) = std::sync::mpsc::channel();
+    let mut watcher = notify::RecommendedWatcher::new(watch_tx, notify::Config::default()).unwrap();
+    watcher
+        .watch(
+            std::env::current_dir().unwrap().join("src").join("shaders").join("spirv").as_path(),
+            notify::RecursiveMode::Recursive,
+        )
+        .unwrap();
 
     Ok(event_loop.unwrap().run(move |event, target| match event {
         Event::WindowEvent {
             event: WindowEvent::RedrawRequested,
             ..
         } => {
+            if watch_rx.try_recv().is_ok() {
+                app.recreate_pipelines();
+                info!("Shader files changed - recreated pipelines and reloaded shaders.");
+            }
             app.update();
             app.draw();
             cmd_handler.handle_command(&mut app);

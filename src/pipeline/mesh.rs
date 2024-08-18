@@ -6,7 +6,9 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::asset::material::MaterialManager;
 use crate::scene::light::LightManager;
+use image::EncodableLayout;
 use std::ffi::CStr;
+use std::fs;
 
 pub struct MeshPipeline {
     viewport: vk::Viewport,
@@ -32,10 +34,10 @@ impl MeshPipeline {
         deletion_queue: &mut DeletionQueue,
         bindless_set_layout: vk::DescriptorSetLayout,
     ) -> Self {
-        let vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/mesh.vert.spv")).expect("Failed to load vertex shader module");
-        let fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/mesh.frag.spv")).expect("Failed to load fragment shader module");
+        let vertex_shader = load_shader_module(device, fs::read("src/shaders/spirv/mesh.vert.spv").unwrap().as_bytes())
+            .expect("Failed to load vertex shader module");
+        let fragment_shader = load_shader_module(device, fs::read("src/shaders/spirv/mesh.frag.spv").unwrap().as_bytes())
+            .expect("Failed to load fragment shader module");
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)

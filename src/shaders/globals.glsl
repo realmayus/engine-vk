@@ -12,8 +12,9 @@ layout(buffer_reference, std430) readonly buffer SceneDataBuffer {
 };
 
 layout(buffer_reference, std430) readonly buffer PbrMaterial {
+    uint albedo_tex;
+    uint metallic_roughness_tex;
     vec4 albedo;
-    uint texture;
     float metallic;
     float roughness;
 };

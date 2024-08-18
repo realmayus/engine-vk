@@ -1,7 +1,10 @@
+use crate::asset::texture::{Texture, TextureManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::scene::model::ModelId;
 use crate::App;
 use ash::vk;
+use image::{EncodableLayout, GenericImageView, ImageReader};
+use log::info;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -9,6 +12,8 @@ pub enum Command {
     LoadScene(PathBuf),
     ImportModel(PathBuf),
     DeleteModel(ModelId),
+    ImportTexture(PathBuf),
+    ReloadShaders,
 }
 
 pub struct CommandHandler {
@@ -62,6 +67,32 @@ impl CommandHandler {
                         }
                     }
                     app.world.borrow_mut().models.remove(&id);
+                }
+                Command::ImportTexture(path) => {
+                    let img = ImageReader::open(path.clone()).unwrap().decode().unwrap();
+                    let dimensions = img.dimensions();
+                    let ctx = SubmitContext::from_app(app);
+                    ctx.immediate_submit(Box::new(|ctx| {
+                        let texture = Texture::new(
+                            TextureManager::DEFAULT_SAMPLER_NEAREST,
+                            vk::Format::R8G8B8A8_SRGB,
+                            ctx,
+                            Some(path.file_name().unwrap().to_string_lossy().into()),
+                            img.to_rgba8().as_bytes(),
+                            vk::Extent3D {
+                                width: dimensions.0,
+                                height: dimensions.1,
+                                depth: 1,
+                            },
+                            false,
+                        );
+                        app.texture_manager.borrow_mut().add_texture(texture, &ctx.device, true);
+                    }));
+                    info!("Imported texture: {:?}", path);
+                }
+                Command::ReloadShaders => {
+                    app.recreate_pipelines();
+                    info!("Recreated pipelines and reloaded shaders.");
                 }
             }
         }

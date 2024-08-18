@@ -6,8 +6,10 @@ use bytemuck::{Pod, Zeroable};
 use crate::asset::material::MaterialManager;
 use crate::scene::billboard::Billboard;
 use crate::scene::light::LightManager;
-use glam::{Mat4, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
+use image::EncodableLayout;
 use std::ffi::CStr;
+use std::fs;
 
 pub struct BillboardPipeline {
     viewport: vk::Viewport,
@@ -20,7 +22,6 @@ pub struct BillboardPipeline {
 #[derive(Pod, Zeroable, Copy, Clone, Debug)]
 struct PushConstants {
     transform: [[f32; 4]; 4],
-    center: [f32; 4],
     uvs: [[f32; 4]; 4],
     scene_data: vk::DeviceAddress,
     material_buffer: vk::DeviceAddress,
@@ -34,10 +35,10 @@ impl BillboardPipeline {
         deletion_queue: &mut DeletionQueue,
         bindless_set_layout: vk::DescriptorSetLayout,
     ) -> Self {
-        let vertex_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/billboard.vert.spv")).expect("Failed to load vertex shader module");
-        let fragment_shader =
-            load_shader_module(device, include_bytes!("../shaders/spirv/unlit.frag.spv")).expect("Failed to load fragment shader module");
+        let vertex_shader = load_shader_module(device, fs::read("src/shaders/spirv/billboard.vert.spv").unwrap().as_bytes())
+            .expect("Failed to load vertex shader module");
+        let fragment_shader = load_shader_module(device, fs::read("src/shaders/spirv/unlit.frag.spv").unwrap().as_bytes())
+            .expect("Failed to load fragment shader module");
 
         let push_constant_range = [vk::PushConstantRange::default()
             .offset(0)
@@ -106,6 +107,7 @@ impl BillboardPipeline {
             height: window_size.1,
         });
     }
+
     pub fn draw(
         &self,
         device: &Device,
@@ -162,9 +164,9 @@ impl BillboardPipeline {
                     scene_data,
                     material_buffer: material_manager.get_material(billboard.material).unwrap().device_address(device),
                     light_buffer: light_manager.device_address(device),
-                    center: billboard.center.to_array(),
                     uvs: billboard.uvs.map(|v| Vec4::from((v.x, v.y, 0.0, 0.0)).to_array()),
                 };
+
                 device.cmd_push_constants(
                     cmd,
                     self.layout,

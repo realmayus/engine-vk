@@ -5,47 +5,45 @@
 layout( push_constant ) uniform constants
 {
     mat4 transform;  // model matrix
-    vec4 center;
     vec4[4] uv;
     SceneDataBuffer sceneDataBuffer;
     PbrMaterial pbrMaterial;
     LightBuffer lightBuffer;
 } PushConstants;
 
+layout (location = 0) out vec2 texCoords;
 
-layout(location = 0) out vec2 fragOffset;
-layout(location = 1) out vec2 texCoords;
-
-const vec2[] vertices = vec2[](
-    vec2(-1.0, -1.0),
-    vec2(-1.0, 1.0),
-    vec2(1.0, -1.0),
-
-    vec2(1.0, -1.0),
-    vec2(-1.0, 1.0),
-    vec2(1.0, 1.0)
+const vec4[] vertices = vec4[](
+    vec4(-1.0, -1.0, 0.0, 1.0),
+    vec4(-1.0, 1.0, 0.0, 1.0),
+    vec4(1.0, -1.0, 0.0, 1.0),
+    vec4(-1.0, 1.0, 0.0, 1.0),
+    vec4(1.0, -1.0, 0.0, 1.0),
+    vec4(1.0, 1.0, 0.0, 1.0)
 );
-
 
 const int[] uv_map = int[](
-    0, 2, 1, 1, 2, 3
+0, 2, 1, 2, 1, 3
 );
 
-const float size = 0.1;
+
+const vec2 SIZE = vec2(0.7, 0.5);
 
 void main()
 {
-    SceneDataBuffer sceneData = PushConstants.sceneDataBuffer;
-    fragOffset = vertices[gl_VertexIndex];
-    vec3 cameraRightWorld = {sceneData.view[0][0], sceneData.view[1][0], sceneData.view[2][0]};
-    vec3 cameraUpWorld = {sceneData.view[0][1], sceneData.view[1][1], sceneData.view[2][1]};
+    mat4 view = PushConstants.sceneDataBuffer.view;
+    mat4 viewproj = PushConstants.sceneDataBuffer.viewproj;
+    vec4 camera_right_world = vec4(view[0][0], view[1][0], view[2][0], 0.0);
+    vec4 camera_up_world = vec4(view[0][1], view[1][1], view[2][1], 0.0);
 
-    vec3 positionWorld = PushConstants.center.xyz
-        + size * fragOffset.x * cameraRightWorld
-        + size * fragOffset.y * cameraUpWorld;
+    vec4 world_pos = vec4(PushConstants.transform[2].xyz, 1.0)
+        + camera_right_world * vertices[gl_VertexIndex].x * SIZE.x
+        + camera_up_world * vertices[gl_VertexIndex].y * SIZE.y;
 
-    gl_Position = sceneData.proj * sceneData.view * vec4(positionWorld, 1.0f);
+    gl_Position = viewproj * vec4(world_pos.xyz, 1.0);
 
-    texCoords.x = float(gl_VertexIndex);
-    texCoords.y = float(gl_VertexIndex);
+    int uv_index = uv_map[gl_VertexIndex];
+    vec2 uv_coords = PushConstants.uv[uv_index].xy;
+    texCoords.x = uv_coords.x;
+    texCoords.y = uv_coords.y;
 }

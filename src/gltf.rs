@@ -218,6 +218,7 @@ impl GltfReader {
                         height: image.height,
                         depth: 1,
                     },
+                    false,
                 )
             }));
             self.texture_manager.borrow_mut().add_texture(texture, &ctx.device, false)
@@ -226,7 +227,8 @@ impl GltfReader {
             Material::new(
                 Some(material.name().unwrap_or_default().to_string()),
                 RawMaterial::Pbr(PbrMaterial {
-                    texture: texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
+                    albedo_tex: texture.unwrap_or(TextureManager::DEFAULT_TEXTURE_WHITE),
+                    metallic_roughness_tex: TextureManager::DEFAULT_TEXTURE_WHITE,
                     albedo,
                     metallic: pbr.metallic_factor(),
                     roughness: pbr.roughness_factor(),
