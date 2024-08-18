@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::asset::material::MaterialManager;
 use crate::scene::billboard::Billboard;
 use crate::scene::light::LightManager;
-use glam::{Mat4, Vec2, Vec3, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec4, Vec4Swizzles};
 use image::EncodableLayout;
 use std::ffi::CStr;
 use std::fs;

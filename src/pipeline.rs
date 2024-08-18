@@ -4,7 +4,7 @@ pub mod grid;
 pub mod mesh;
 
 use crate::asset::texture::TEXTURE_IMAGE_FORMAT;
-use crate::{DEPTH_FORMAT, SWAPCHAIN_IMAGE_FORMAT};
+use crate::DEPTH_FORMAT;
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 

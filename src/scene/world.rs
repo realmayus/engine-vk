@@ -7,7 +7,7 @@ use crate::scene::model::{Model, ModelId};
 use ash::Device;
 use egui::ahash::HashMap;
 use glam::Vec2;
-use glam::{Mat4, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec4};
 use hashbrown::HashSet;
 
 #[derive(Default)]

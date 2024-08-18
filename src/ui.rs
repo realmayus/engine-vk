@@ -12,7 +12,7 @@ use crate::TextureManager;
 use crate::World;
 use crate::{util, MaterialManager};
 use egui::{Align2, Color32, Rgba, RichText, TextBuffer, TextureFilter, Widget};
-use glam::{Mat4, Vec2, Vec4, Vec4Swizzles};
+use glam::{Mat4, Vec2, Vec4};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc;

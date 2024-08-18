@@ -207,7 +207,7 @@ pub mod immediate_submit {
     use crate::App;
     use ash::{vk, Device};
     use std::cell::RefCell;
-    use std::ops::Deref;
+
     use std::rc::Rc;
 
     /**

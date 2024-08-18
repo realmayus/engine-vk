@@ -1,7 +1,6 @@
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::AllocUsage;
-use crate::util::IntoGpuMatrix;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};

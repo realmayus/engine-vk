@@ -22,7 +22,6 @@ use crate::commands::{Command, CommandHandler};
 use crate::gltf::GltfReader;
 use crate::pipeline::billboard::BillboardPipeline;
 use asset::texture::TextureManager;
-use glam::{Mat4, Vec4};
 use gpu_alloc::GpuAllocator;
 use gpu_alloc_ash::device_properties;
 use log::{debug, info};
