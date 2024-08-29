@@ -1,5 +1,5 @@
 use crate::asset::material::{Material, RawMaterial};
-use crate::asset::texture::{Texture, TextureId};
+use crate::asset::texture::{Texture, TextureId, TextureKind};
 use crate::camera::Camera;
 use crate::commands::Command;
 use crate::observe;
@@ -140,13 +140,14 @@ impl Gui {
             });
 
             ui.checkbox(&mut app_settings.show_grid, "Show grid");
+            ui.checkbox(&mut app_settings.view_as_light, "View as light");
             egui::CollapsingHeader::new("Camera".as_str()).show(ui, |ui| {
                 observe!(
-                    camera.position,
+                    camera.target,
                     {
-                        ui.add(egui::Slider::new(&mut camera.position.x, -5.0..=5.0).text("X"));
-                        ui.add(egui::Slider::new(&mut camera.position.y, -5.0..=5.0).text("Y"));
-                        ui.add(egui::Slider::new(&mut camera.position.z, -5.0..=5.0).text("Z"));
+                        ui.add(egui::Slider::new(&mut camera.target.x, -5.0..=5.0).text("X"));
+                        ui.add(egui::Slider::new(&mut camera.target.y, -5.0..=5.0).text("Y"));
+                        ui.add(egui::Slider::new(&mut camera.target.z, -5.0..=5.0).text("Z"));
                     },
                     |_v| {
                         camera.dirty = true;
@@ -201,14 +202,13 @@ impl Gui {
                     observe!(
                         (cutoff_angle, inner_angle, radius, intensity, dir),
                         {
-                            ui.add(egui::Slider::new(&mut cutoff_angle, 0.0..=360.0).text("Cutoff"));
-                            ui.add(egui::Slider::new(&mut inner_angle, 0.0..=360.0).text("Inner"));
+                            ui.add(egui::Slider::new(&mut cutoff_angle, 0.0..=180.0).text("Cutoff"));
+                            ui.add(egui::Slider::new(&mut inner_angle, 0.0..=180.0).text("Inner"));
                             ui.add(egui::Slider::new(&mut radius, 0.0..=100.0).text("Radius"));
-                            ui.add(egui::Slider::new(&mut intensity, 0.0..=5.0).text("Intensity"));
+                            ui.add(egui::Slider::new(&mut intensity, 0.0..=150.0).text("Intensity"));
                             ui.add(egui::Slider::new(&mut dir[0], -2.0..=2.0).text("Dir X"));
                             ui.add(egui::Slider::new(&mut dir[1], -2.0..=2.0).text("Dir Y"));
                             ui.add(egui::Slider::new(&mut dir[2], -2.0..=2.0).text("Dir Z"));
-                            ui.add(egui::Slider::new(&mut dir[3], 0.0..=1.0).text("Dir W"));
                         },
                         |v| {
                             _submit_context.clone().immediate_submit(Box::new(|ctx| {
@@ -220,7 +220,7 @@ impl Gui {
                                         light.direction = dir;
                                         light.radius = radius;
                                         light.inner_angle = inner_angle.to_radians();
-
+                                        light.update_viewproj();
                                         // light.position = camera.view().mul(camera.proj()).transform_point3(Vec4::from(light.position).xyz()).extend(1.0).to_array();
                                     },
                                     ctx,
@@ -292,7 +292,7 @@ impl Gui {
 
                     // allow setting UVs
                     ui.label("UVs");
-                    let mut uvs = billboard.uvs.clone();
+                    let mut uvs = billboard.uvs;
                     observe!(
                         uvs,
                         {
@@ -300,8 +300,8 @@ impl Gui {
                                 ui.horizontal(|ui| {
                                     ui.label(format!("UV {}", i));
                                     let mut uv = *uv;
-                                    ui.add(egui::DragValue::new(&mut uv.x).clamp_range(0.0..=1.0).speed(0.01).prefix("X"));
-                                    ui.add(egui::DragValue::new(&mut uv.y).clamp_range(0.0..=1.0).speed(0.01).prefix("Y"));
+                                    ui.add(egui::DragValue::new(&mut uv.x).range(0.0..=1.0).speed(0.01).prefix("X"));
+                                    ui.add(egui::DragValue::new(&mut uv.y).range(0.0..=1.0).speed(0.01).prefix("Y"));
                                     uvs[i] = uv;
                                 });
                             }
@@ -332,7 +332,7 @@ impl Gui {
                     }
                 });
                 self.image_lock = false;
-                for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
+                for texture in texture_manager.iter_textures().filter(|t| t.kind == TextureKind::Color) {
                     ui.collapsing(
                         format!("{} ({})", texture.image.label.clone().unwrap_or("Untitled".into()), texture.id),
                         |ui| {
@@ -403,7 +403,7 @@ impl Gui {
                                             .unwrap_or("Untitled".into()),
                                     )
                                     .show_ui(ui, |ui| {
-                                        for texture in texture_manager.iter_textures().filter(|t| !t.internal) {
+                                        for texture in texture_manager.iter_textures().filter(|t| t.kind == TextureKind::Color) {
                                             ui.selectable_value(
                                                 &mut mat.albedo_tex,
                                                 texture.id,

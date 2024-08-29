@@ -35,12 +35,13 @@ layout(buffer_reference, scalar) readonly buffer VertexBuffer {
 struct Light {
     vec4 position;
     vec4 color;
-    mat4 modelview; // only for spotlights; identity matrix for point lights
+    mat4 lightspace; // only for spotlights; identity matrix for point lights
     vec4 direction;
     float intensity;
     float outer_angle;
     float inner_angle;
     float radius;
+    uint shadow_map;
 };
 
 layout(buffer_reference, scalar) readonly buffer LightBuffer {

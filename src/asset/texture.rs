@@ -12,10 +12,10 @@ pub type TextureId = u32;
 #[derive(Debug)]
 pub struct Texture {
     pub id: TextureId,
-    pub internal: bool,
     pub image: AllocatedImage,
     pub sampler: SamplerId,
     pub data: Vec<u8>,
+    pub(crate) kind: TextureKind,
 }
 pub const TEXTURE_IMAGE_FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 impl Texture {
@@ -24,31 +24,53 @@ impl Texture {
         format: vk::Format,
         ctx: &mut SubmitContext,
         label: Option<String>,
-        data: &[u8],
         extent: vk::Extent3D,
-        internal: bool,
+        kind: TextureKind,
     ) -> Self {
         let img = AllocatedImage::new(
             &ctx.device,
             &mut ctx.allocator.borrow_mut(),
             extent,
             format,
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::SAMPLED
+                | if kind == TextureKind::Depth {
+                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                } else {
+                    vk::ImageUsageFlags::empty()
+                },
             AllocUsage::GpuOnly,
-            vk::ImageAspectFlags::COLOR,
+            if kind == TextureKind::Depth {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            },
             vk::ImageCreateFlags::empty(),
             label.clone(),
         );
-
-        img.write(data, ctx);
-
         Self {
             image: img,
             id: 0,
             sampler,
-            data: Vec::from(data),
-            internal,
+            data: vec![],
+            kind,
         }
+    }
+
+    pub fn new_init(
+        sampler: SamplerId,
+        format: vk::Format,
+        ctx: &mut SubmitContext,
+        label: Option<String>,
+        data: &[u8],
+        extent: vk::Extent3D,
+        kind: TextureKind,
+    ) -> Self {
+        let mut tex = Self::new(sampler, format, ctx, label, extent, kind);
+        tex.image.write(data, ctx);
+        tex.data = Vec::from(data);
+        tex
     }
 
     /// Replaces the image data with the given data. Creates a new AllocatedImage and destroys the old one.
@@ -60,7 +82,11 @@ impl Texture {
             TEXTURE_IMAGE_FORMAT,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             AllocUsage::GpuOnly,
-            vk::ImageAspectFlags::COLOR,
+            if self.kind == TextureKind::Depth {
+                vk::ImageAspectFlags::DEPTH
+            } else {
+                vk::ImageAspectFlags::COLOR
+            },
             vk::ImageCreateFlags::empty(),
             label,
         );
@@ -97,12 +123,20 @@ impl Texture {
             let src_offset = vk::Offset3D { x: 0, y: 0, z: 0 };
             let dst_offset = vk::Offset3D { x: pos.0, y: pos.1, z: 0 };
             let src_subresource = vk::ImageSubresourceLayers::default()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .aspect_mask(if self.kind == TextureKind::Depth {
+                    vk::ImageAspectFlags::DEPTH
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                })
                 .mip_level(0)
                 .base_array_layer(0)
                 .layer_count(1);
             let dst_subresource = vk::ImageSubresourceLayers::default()
-                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .aspect_mask(if self.kind == TextureKind::Depth {
+                    vk::ImageAspectFlags::DEPTH
+                } else {
+                    vk::ImageAspectFlags::COLOR
+                })
                 .mip_level(0)
                 .base_array_layer(0)
                 .layer_count(1);
@@ -211,7 +245,7 @@ impl TextureManager {
         ctx.nest(Box::new(|ctx| {
             Self::add_texture(
                 &mut manager,
-                Texture::new(
+                Texture::new_init(
                     Self::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
@@ -222,7 +256,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
-                    false,
+                    TextureKind::Color,
                 ),
                 &ctx.device,
                 false,
@@ -231,7 +265,7 @@ impl TextureManager {
         ctx.nest(Box::new(|ctx| {
             Self::add_texture(
                 &mut manager,
-                Texture::new(
+                Texture::new_init(
                     Self::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
@@ -242,7 +276,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
-                    false,
+                    TextureKind::Color,
                 ),
                 &ctx.device,
                 false,
@@ -251,7 +285,7 @@ impl TextureManager {
         ctx.nest(Box::new(|ctx| {
             Self::add_texture(
                 &mut manager,
-                Texture::new(
+                Texture::new_init(
                     Self::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
@@ -262,7 +296,7 @@ impl TextureManager {
                         height: 16,
                         depth: 1,
                     },
-                    false,
+                    TextureKind::Color,
                 ),
                 &ctx.device,
                 false,
@@ -271,7 +305,7 @@ impl TextureManager {
         ctx.nest(Box::new(|ctx| {
             Self::add_texture(
                 &mut manager,
-                Texture::new(
+                Texture::new_init(
                     Self::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
@@ -282,7 +316,7 @@ impl TextureManager {
                         height: 1,
                         depth: 1,
                     },
-                    false,
+                    TextureKind::Color,
                 ),
                 &ctx.device,
                 true,
@@ -368,4 +402,11 @@ impl TextureManager {
             }
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TextureKind {
+    Color,
+    ColorInternal, // don't show in UI
+    Depth,         // depth is always internal
 }

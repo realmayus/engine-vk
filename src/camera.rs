@@ -15,8 +15,8 @@ pub struct Camera {
 
 impl Camera {
     const UP: Vec3 = Vec3::new(0.0, -1.0, 0.0);
-    const NEAR: f32 = 10000.0;
-    const FAR: f32 = 0.1;
+    const NEAR: f32 = 0.1;
+    const FAR: f32 = 10000.0;
     pub fn new(width: f32, height: f32) -> Self {
         let position = Vec3::new(2.0, 3.0, 5.0);
         let target = Vec3::ZERO;

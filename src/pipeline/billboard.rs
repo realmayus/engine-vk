@@ -80,7 +80,7 @@ impl BillboardPipeline {
 
         let viewport = vk::Viewport::default()
             .width(window_size.0 as f32)
-            .height(-(window_size.1 as f32))
+            .height((window_size.1 as f32))
             .y(window_size.1 as f32)
             .max_depth(1.0);
         let scissor = vk::Rect2D::default().extent(vk::Extent2D {
@@ -131,7 +131,7 @@ impl BillboardPipeline {
             .load_op(vk::AttachmentLoadOp::LOAD)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
+                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
             });
         let render_info = vk::RenderingInfo::default()
             .color_attachments(&color_attachments)

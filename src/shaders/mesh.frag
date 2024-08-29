@@ -83,6 +83,26 @@ vec3 evaluatePunctualLight(Light light, float roughness, vec3 f0, vec3 n, vec3 d
 }
 
 
+const mat4 bias = mat4(
+0.5, 0.0, 0.0, 0.0,
+0.0, 0.5, 0.0, 0.0,
+0.0, 0.0, 1.0, 0.0,
+0.5, 0.5, 0.0, 1.0 );
+
+
+float textureProj(vec4 shadowCoord, vec2 off, uint shadowMap)
+{
+    float shadow = 1.0;
+    if ( shadowCoord.z > -1.0 && shadowCoord.z < 1.0 )
+    {
+        float dist = texture( tex[shadowMap], shadowCoord.st + off ).r;
+        if ( shadowCoord.w > 0.0 && dist < shadowCoord.z )
+        {
+            shadow = 0.0;
+        }
+    }
+    return shadow;
+}
 
 void main() {
     PbrMaterial mat = PushConstants.pbrMaterial;
@@ -100,12 +120,15 @@ void main() {
     {
         Light light = PushConstants.lightBuffer.lights[i];
         vec4 lightPos = PushConstants.sceneDataBuffer.view * vec4(light.position.xyz, 1.0);
-        acc += evaluatePunctualLight(light, roughness, f0, normal, diffuseColor);
-    }
 
+        vec4 fragPosLightSpace = bias * light.lightspace * vec4(worldPos.xyz, 1.0);
+        vec4 projCoords = fragPosLightSpace / fragPosLightSpace.w;
+        float shadow = textureProj(projCoords, vec2(0.0, 0.0), light.shadow_map);
+        acc += shadow * evaluatePunctualLight(light, roughness, f0, normal, diffuseColor);
+    }
+    acc = clamp(acc, 0.0, 1.0);
     vec3 ambient = vec3(0.03, 0.03, 0.03);
 
     acc += baseColor * ambient;
     outFragColor = vec4(acc, 1.0);
-
 }

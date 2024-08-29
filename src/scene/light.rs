@@ -1,10 +1,18 @@
+use crate::asset::texture::TextureKind;
+use crate::asset::texture::{Texture, TextureId, TextureManager};
+use crate::pipeline::shadow_mapping::{ShadowMappingPipeline, SHADOW_MAP_SIZE};
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::AllocUsage;
+use crate::scene::mesh::Mesh;
+use crate::DEPTH_FORMAT;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4, Vec4Swizzles};
 use log::{debug, error};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::RwLock;
 
 pub type LightId = usize;
 pub struct Light {
@@ -29,9 +37,10 @@ impl Light {
         intensity: f32,
     ) -> Self {
         let position = position.into();
-        let cutoff_angle = 12.5f32.to_radians().cos();
-        let view = Mat4::look_to_lh(position.into(), Vec3::from(dir.into()), -Vec3::Y);
-        let proj = Mat4::perspective_lh(fov_radians.to_radians(), extent.0 / extent.1, 0.1, 100.0);
+        let dir = dir.into();
+        let cutoff_angle = 180.0f32.to_radians().cos();
+        let view = Mat4::look_to_lh(Vec3::from(position), Vec3::from(dir), -Vec3::Y);
+        let proj = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
         Self {
             id: 0,
             meta: LightMeta::Spotlight { fov: fov_radians, extent },
@@ -39,28 +48,12 @@ impl Light {
                 position: [position[0], position[1], position[2], 1.0],
                 color: [color[0], color[1], color[2], 1.0],
                 viewproj: (proj * view).to_cols_array_2d(),
-                direction: [dir.into()[0], dir.into()[1], dir.into()[2], 1.0],
+                direction: [dir[0], dir[1], dir[2], 0.0],
                 intensity,
                 cutoff_angle,
-                inner_angle: 5.0f32.to_radians(),
-                radius: 1.0,
-            },
-        }
-    }
-
-    pub fn new_pointlight(position: Vec3, color: [f32; 3], intensity: f32) -> Self {
-        Self {
-            id: 0,
-            meta: LightMeta::Pointlight,
-            data: RawLight {
-                position: [position[0], position[1], position[2], 1.0],
-                color: [color[0], color[1], color[2], 1.0],
-                viewproj: Mat4::IDENTITY.to_cols_array_2d(),
-                direction: [1.0, 0.0, 0.0, 1.0],
-                intensity,
-                cutoff_angle: 0.0,
-                inner_angle: 0.0,
-                radius: 1.0,
+                inner_angle: 180.0f32.to_radians(),
+                radius: 100.0,
+                shadow_map: 0,
             },
         }
     }
@@ -77,6 +70,16 @@ pub struct RawLight {
     pub cutoff_angle: f32,
     pub inner_angle: f32,
     pub radius: f32,
+    pub shadow_map: TextureId,
+}
+
+impl RawLight {
+    pub fn update_viewproj(&mut self) {
+        // let view = Mat4::look_to_rh(Vec4::from(self.position).xyz(), Vec4::from(self.direction).xyz(), -Vec3::Y);
+        let view = Mat4::look_at_lh(Vec4::from(self.position).xyz(), Vec4::ZERO.xyz(), -Vec3::Y);
+        let proj = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 0.1, 100.0);
+        self.viewproj = (proj * view).to_cols_array_2d();
+    }
 }
 
 pub struct LightManager {
@@ -94,7 +97,7 @@ impl LightManager {
             allocator,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             AllocUsage::GpuOnly,
-            Self::PREALLOC_COUNT * std::mem::size_of::<RawLight>() as u64,
+            Self::PREALLOC_COUNT * size_of::<RawLight>() as u64,
             Some("Light Buffer".to_string()),
         );
 
@@ -107,14 +110,31 @@ impl LightManager {
     }
 
     // Adds a light to the manager and returns its id. Resizes buffer if needed.
-    pub fn add_light(&mut self, mut light: Light, ctx: &mut SubmitContext) -> LightId {
+    pub fn add_light(&mut self, mut light: Light, ctx: &mut SubmitContext, texture_manager: Rc<RefCell<TextureManager>>) -> LightId {
         light.id = self.max_id;
+
+        let shadow_map = Texture::new(
+            TextureManager::DEFAULT_SAMPLER_LINEAR,
+            DEPTH_FORMAT,
+            ctx,
+            Some(format!("shadow_map_{}", light.id)),
+            vk::Extent3D {
+                width: SHADOW_MAP_SIZE.0,
+                height: SHADOW_MAP_SIZE.1,
+                depth: 1,
+            },
+            TextureKind::Depth,
+        );
+        let shadow_map_id = texture_manager.borrow_mut().add_texture(shadow_map, &ctx.device, true);
+        light.data.shadow_map = shadow_map_id;
+
         self.lights.push(light);
         self.max_id += 1;
-        if self.lights.len() as u64 > self.buffer.size / std::mem::size_of::<RawLight>() as u64 {
+        if self.lights.len() as u64 > self.buffer.size / size_of::<RawLight>() as u64 {
             self.resize(ctx);
         }
         self.rewrite_buffer(ctx);
+
         self.count_dirty = true;
         self.max_id - 1
     }

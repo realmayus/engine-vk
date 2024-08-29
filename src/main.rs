@@ -48,8 +48,9 @@ use winit::{
 use crate::pipeline::egui::EguiPipeline;
 use crate::pipeline::grid::GridPipeline;
 use crate::pipeline::mesh::MeshPipeline;
+use crate::pipeline::shadow_mapping::ShadowMappingPipeline;
 
-use crate::scene::light::LightManager;
+use crate::scene::light::{LightId, LightManager};
 use crate::scene::world::World;
 use crate::ui::Gui;
 
@@ -95,11 +96,13 @@ struct App {
     cmd_sender: mpsc::Sender<Command>,
     bindless_set_layout: DescriptorSetLayout,
     pipeline_deletion_queue: DeletionQueue,
+    shadow_mapping_pipeline: ShadowMappingPipeline,
 }
 
 struct AppSettings {
     show_gui: bool,
     show_grid: bool,
+    view_as_light: bool,
 }
 
 pub const SWAPCHAIN_IMAGE_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
@@ -223,6 +226,7 @@ impl App {
             ),
         );
         let billboard_pipeline = BillboardPipeline::new(&device, window_size, &mut pipeline_deletion_queue, bindless_set_layout);
+        let shadow_mapping_pipeline = ShadowMappingPipeline::new(&device, &mut pipeline_deletion_queue, bindless_set_layout);
 
         info!("Init done.");
 
@@ -254,6 +258,7 @@ impl App {
             egui_pipeline,
             grid_pipeline,
             billboard_pipeline,
+            shadow_mapping_pipeline,
             immediate_command_pool,
             immediate_command_buffer,
             immediate_fence,
@@ -265,6 +270,7 @@ impl App {
             settings: AppSettings {
                 show_gui: true,
                 show_grid: true,
+                view_as_light: false,
             },
             gui: Gui::new(cmd_sender.clone()),
             world: Rc::new(RefCell::new(World::default())),
@@ -278,14 +284,12 @@ impl App {
         }
         self.pipeline_deletion_queue.flush(&self.device, &mut self.allocator.borrow_mut());
         self.egui_pipeline.destroy(&self.device, &mut self.allocator.borrow_mut());
-
         self.mesh_pipeline = MeshPipeline::new(
             &self.device,
             self.window_size,
             &mut self.pipeline_deletion_queue,
             self.bindless_set_layout,
         );
-
         self.egui_pipeline = EguiPipeline::new(
             &self.device,
             self.window_size,
@@ -300,13 +304,14 @@ impl App {
                 self.graphics_queue.0,
             ),
         );
-
         self.billboard_pipeline = BillboardPipeline::new(
             &self.device,
             self.window_size,
             &mut self.pipeline_deletion_queue,
             self.bindless_set_layout,
         );
+        self.shadow_mapping_pipeline =
+            ShadowMappingPipeline::new(&self.device, &mut self.pipeline_deletion_queue, self.bindless_set_layout);
         self.resize(self.window_size);
     }
 
@@ -776,6 +781,22 @@ impl App {
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
             );
+            {
+                // todo don't do this on every frame, only when scene changes
+                let texture_manager = self.texture_manager.borrow();
+                for light in self.light_manager.borrow().iter().filter(|light| light.data.shadow_map != 0) {
+                    let shadow_map = texture_manager.get_texture(light.data.shadow_map).unwrap();
+                    self.shadow_mapping_pipeline.draw(
+                        &self.device,
+                        cmd_buffer,
+                        &self.world.borrow().get_meshes(),
+                        shadow_map.image.view,
+                        self.texture_manager.borrow().descriptor_set(),
+                        self.scene_data.buffer.device_address(&self.device),
+                        &self.light_manager.borrow(),
+                    )
+                }
+            }
 
             self.mesh_pipeline.draw(
                 &self.device,
@@ -997,6 +1018,12 @@ impl App {
             self.scene_data.data.proj = proj.to_cols_array_2d();
             self.scene_data.data.unproj = (view.inverse() * self.camera.proj().inverse()).to_cols_array_2d();
             self.scene_data.data.viewproj = viewproj.to_cols_array_2d();
+            self.scene_data.dirty = true;
+        }
+        if self.settings.view_as_light {
+            let mgr = self.light_manager.borrow();
+            let light = mgr.iter().next().unwrap();
+            self.scene_data.data.viewproj = light.data.viewproj;
             self.scene_data.dirty = true;
         }
         if self.light_manager.borrow().count_dirty {

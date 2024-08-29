@@ -22,7 +22,7 @@ impl World {
     }
 
     pub fn add_model(&mut self, mut model: Model) -> ModelId {
-        if let Some(x) = model.light {
+        if model.light.is_some() {
             let child = Model::new(
                 vec![],
                 Mat4::IDENTITY,
@@ -93,6 +93,7 @@ impl World {
                 light,
                 |light| {
                     light.position = transform.w_axis.to_array();
+                    light.update_viewproj();
                 },
                 ctx,
             );

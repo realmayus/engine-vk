@@ -8,6 +8,7 @@ use bytemuck::{Pod, Zeroable};
 use egui::epaint::{ImageDelta, Primitive};
 use egui::{Context, FullOutput, ImageData, TexturesDelta};
 
+use crate::asset::texture::TextureKind;
 use crate::asset::texture::{Texture, TextureId, TextureManager};
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
@@ -368,7 +369,7 @@ impl EguiPipeline {
             debug!("Replacing egui texture");
             if let Some([x, y]) = delta.pos {
                 let patch = ctx.clone().immediate_submit(Box::new(|ctx| {
-                    Texture::new(
+                    Texture::new_init(
                         TextureManager::DEFAULT_SAMPLER_NEAREST,
                         TEXTURE_IMAGE_FORMAT,
                         ctx,
@@ -383,7 +384,7 @@ impl EguiPipeline {
                             height: delta.image.height() as u32,
                             depth: 1,
                         },
-                        true,
+                        TextureKind::ColorInternal,
                     )
                 }));
                 texture_manager
@@ -412,7 +413,7 @@ impl EguiPipeline {
             debug!("Adding egui texture");
 
             ctx.clone().immediate_submit(Box::new(|ctx| {
-                let texture = Texture::new(
+                let texture = Texture::new_init(
                     TextureManager::DEFAULT_SAMPLER_NEAREST,
                     TEXTURE_IMAGE_FORMAT,
                     ctx,
@@ -427,7 +428,7 @@ impl EguiPipeline {
                         height: delta.image.height() as u32,
                         depth: 1,
                     },
-                    true,
+                    TextureKind::ColorInternal,
                 );
                 let id = texture_manager.add_texture(texture, &ctx.device, true);
                 self.textures.insert(egui_texture_id, id);

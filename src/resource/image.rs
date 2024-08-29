@@ -1,3 +1,4 @@
+use crate::asset::texture::TextureKind;
 use crate::resource::buffer::AllocatedBuffer;
 use crate::resource::immediate_submit::SubmitContext;
 use crate::resource::{AllocUsage, Allocation, Allocator, LOG_ALLOCATIONS};
@@ -15,6 +16,7 @@ pub struct AllocatedImage {
     pub extent: vk::Extent3D,
     pub format: vk::Format,
     pub label: Option<String>,
+    // pub kind: ImageKind,
 }
 
 impl AllocatedImage {
@@ -28,6 +30,7 @@ impl AllocatedImage {
         image_aspect: vk::ImageAspectFlags,
         flags: vk::ImageCreateFlags,
         label: Option<String>,
+        // kind: ImageKind,
     ) -> Self {
         let info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -94,10 +97,10 @@ impl AllocatedImage {
             extent,
             format,
             label,
+            // kind,
         }
     }
 
-    // https://i.imgflip.com/8l3uzz.jpg
     pub fn write<'a>(&'a self, data: &'a [u8], ctx: &mut SubmitContext) {
         let mut staging = AllocatedBuffer::new(
             &ctx.device,

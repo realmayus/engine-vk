@@ -1,3 +1,4 @@
+use crate::asset::texture::TextureKind;
 use crate::asset::texture::{Texture, TextureManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::scene::model::ModelId;
@@ -73,7 +74,7 @@ impl CommandHandler {
                     let dimensions = img.dimensions();
                     let ctx = SubmitContext::from_app(app);
                     ctx.immediate_submit(Box::new(|ctx| {
-                        let texture = Texture::new(
+                        let texture = Texture::new_init(
                             TextureManager::DEFAULT_SAMPLER_NEAREST,
                             vk::Format::R8G8B8A8_SRGB,
                             ctx,
@@ -84,7 +85,7 @@ impl CommandHandler {
                                 height: dimensions.1,
                                 depth: 1,
                             },
-                            false,
+                            TextureKind::Color,
                         );
                         app.texture_manager.borrow_mut().add_texture(texture, &ctx.device, true);
                     }));

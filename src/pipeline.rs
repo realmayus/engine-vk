@@ -2,6 +2,7 @@ pub mod billboard;
 pub mod egui;
 pub mod grid;
 pub mod mesh;
+pub mod shadow_mapping;
 
 use crate::asset::texture::TEXTURE_IMAGE_FORMAT;
 use crate::DEPTH_FORMAT;
@@ -82,7 +83,7 @@ impl Default for PipelineBuilder<'_> {
             depth_stencil: vk::PipelineDepthStencilStateCreateInfo::default()
                 .depth_test_enable(true)
                 .depth_write_enable(true)
-                .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
+                .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
                 .depth_bounds_test_enable(false)
                 .stencil_test_enable(false)
                 .front(Default::default())

@@ -1,5 +1,6 @@
 use crate::asset::material::MaterialManager;
 use crate::asset::material::{Material, MaterialId, PbrMaterial, RawMaterial};
+use crate::asset::texture::TextureKind;
 use crate::asset::texture::{Texture, TextureManager};
 use crate::resource::immediate_submit::SubmitContext;
 use crate::scene::light::{Light, LightManager};
@@ -105,8 +106,15 @@ impl GltfReader {
             match light.kind() {
                 Kind::Point => {
                     info!("Point light");
-                    let light = Light::new_pointlight(node_transform.w_axis.xyz(), [1.0, 1.0, 1.0], 60.0f32.to_radians());
-                    let light = self.light_manager.borrow_mut().add_light(light, ctx);
+                    let light = Light::new_spotlight(
+                        node_transform.w_axis.xyz(),
+                        [1.0, 1.0, 1.0],
+                        60.0f32.to_radians(),
+                        (1000.0, 1000.0),
+                        Vec3::X,
+                        light.intensity(),
+                    );
+                    let light = self.light_manager.borrow_mut().add_light(light, ctx, self.texture_manager.clone());
                     Model::new(Vec::new(), node_transform, Some(light), None, node.name().map(|x| x.to_string()))
                 }
                 Kind::Spot {
@@ -125,7 +133,7 @@ impl GltfReader {
                         dir.xyz(),
                         light.intensity(),
                     );
-                    let light = self.light_manager.borrow_mut().add_light(light, ctx);
+                    let light = self.light_manager.borrow_mut().add_light(light, ctx, self.texture_manager.clone());
                     Model::new(Vec::new(), node_transform, Some(light), None, node.name().map(|x| x.to_string()))
                 }
                 _ => todo!("directional lights"),
@@ -202,7 +210,7 @@ impl GltfReader {
             let image = images.get(info.texture().source().index()).unwrap();
 
             let texture = ctx.nest(Box::new(|ctx| {
-                Texture::new(
+                Texture::new_init(
                     TextureManager::DEFAULT_SAMPLER_NEAREST,
                     vk::Format::R8G8B8A8_SRGB,
                     ctx,
@@ -217,7 +225,7 @@ impl GltfReader {
                         height: image.height,
                         depth: 1,
                     },
-                    false,
+                    TextureKind::Color,
                 )
             }));
             self.texture_manager.borrow_mut().add_texture(texture, &ctx.device, false)
