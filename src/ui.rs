@@ -183,32 +183,29 @@ impl Gui {
                 ui.collapsing(format!("Light {}", light_id), |ui| {
                     let mgr = light_manager.borrow();
                     let light = mgr.get_light(light_id).unwrap();
-                    ui.label(format!("Color: {:?}", light.data.color));
-                    ui.label(format!("Intensity: {:?}", light.data.intensity));
-                    ui.label(format!("Position: {:?}", light.data.position));
-                    ui.label(format!("Direction: {:?}", light.data.direction));
-                    ui.label(format!(
-                        "Cutoff: {:?} / {}°",
-                        light.data.cutoff_angle,
-                        light.data.cutoff_angle.to_degrees()
-                    ));
                     let mut cutoff_angle = light.data.cutoff_angle.to_degrees();
                     let mut inner_angle = light.data.inner_angle.to_degrees();
                     let mut radius = light.data.radius;
 
                     let mut intensity = light.data.intensity;
                     let mut dir = light.data.direction;
+                    let mut color = light.data.color;
                     drop(mgr);
                     observe!(
-                        (cutoff_angle, inner_angle, radius, intensity, dir),
+                        (cutoff_angle, inner_angle, radius, intensity, dir, color),
                         {
                             ui.add(egui::Slider::new(&mut cutoff_angle, 0.0..=180.0).text("Cutoff"));
                             ui.add(egui::Slider::new(&mut inner_angle, 0.0..=180.0).text("Inner"));
                             ui.add(egui::Slider::new(&mut radius, 0.0..=100.0).text("Radius"));
                             ui.add(egui::Slider::new(&mut intensity, 0.0..=150.0).text("Intensity"));
-                            ui.add(egui::Slider::new(&mut dir[0], -2.0..=2.0).text("Dir X"));
-                            ui.add(egui::Slider::new(&mut dir[1], -2.0..=2.0).text("Dir Y"));
-                            ui.add(egui::Slider::new(&mut dir[2], -2.0..=2.0).text("Dir Z"));
+                            ui.horizontal(|ui| {
+                                ui.label("Direction");
+                                ui.add(egui::DragValue::new(&mut dir[0]).speed(0.01).range(-2.0..=2.0).prefix("X "));
+                                ui.add(egui::DragValue::new(&mut dir[1]).speed(0.01).range(-2.0..=2.0).prefix("Y "));
+                                ui.add(egui::DragValue::new(&mut dir[2]).speed(0.01).range(-2.0..=2.0).prefix("Z "));
+                            });
+                            //color picker
+                            ui.color_edit_button_rgba_unmultiplied(&mut color);
                         },
                         |v| {
                             _submit_context.clone().immediate_submit(Box::new(|ctx| {
@@ -220,23 +217,14 @@ impl Gui {
                                         light.direction = dir;
                                         light.radius = radius;
                                         light.inner_angle = inner_angle.to_radians();
+                                        light.color = color;
                                         light.update_viewproj();
-                                        // light.position = camera.view().mul(camera.proj()).transform_point3(Vec4::from(light.position).xyz()).extend(1.0).to_array();
                                     },
                                     ctx,
                                 );
                             }));
                         }
                     );
-                    let mgr = light_manager.borrow();
-                    let light = mgr.get_light(light_id).unwrap();
-                    match light.meta {
-                        LightMeta::Spotlight { fov, extent } => {
-                            ui.label(format!("FOV: {}", fov.to_degrees()));
-                            ui.label(format!("Extent: {:?}", extent));
-                        }
-                        LightMeta::Pointlight => {}
-                    }
                 });
             }
 

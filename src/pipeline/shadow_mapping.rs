@@ -4,7 +4,7 @@ use crate::util::{load_shader_module, DeletionQueue};
 use ash::{vk, Device};
 use bytemuck::{Pod, Zeroable};
 
-use crate::scene::light::LightManager;
+use crate::scene::light::{LightId, LightManager};
 use crate::DEPTH_FORMAT;
 use image::EncodableLayout;
 use std::ffi::CStr;
@@ -62,6 +62,10 @@ impl ShadowMappingPipeline {
                 .depth_bias_constant_factor(1.25)
                 .depth_bias_slope_factor(1.5),
             render_info: vk::PipelineRenderingCreateInfo::default().depth_attachment_format(DEPTH_FORMAT),
+            depth_stencil: vk::PipelineDepthStencilStateCreateInfo::default()
+                .depth_test_enable(true)
+                .depth_write_enable(true)
+                .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL),
             ..Default::default()
         };
 
@@ -103,6 +107,7 @@ impl ShadowMappingPipeline {
         bindless_descriptor_set: vk::DescriptorSet,
         scene_data: vk::DeviceAddress,
         light_manager: &LightManager,
+        light_id: LightId,
     ) {
         let depth_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(depth_view)
@@ -152,7 +157,7 @@ impl ShadowMappingPipeline {
                     bytemuck::cast_slice(&[push_constants]),
                 );
                 device.cmd_bind_index_buffer(cmd, mesh.index_buffer(), 0, vk::IndexType::UINT32);
-                device.cmd_draw_indexed(cmd, mesh.indices.len() as u32, 1, 0, 0, 0);
+                device.cmd_draw_indexed(cmd, mesh.indices.len() as u32, 1, 0, 0, light_id as u32);
             }
             device.cmd_end_rendering(cmd);
         }

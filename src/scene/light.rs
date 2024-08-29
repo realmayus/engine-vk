@@ -66,7 +66,7 @@ pub struct RawLight {
     pub color: [f32; 4],
     pub viewproj: [[f32; 4]; 4],
     pub direction: [f32; 4],
-    pub intensity: f32,
+    pub intensity: f32, // luminous intensity I in candela
     pub cutoff_angle: f32,
     pub inner_angle: f32,
     pub radius: f32,

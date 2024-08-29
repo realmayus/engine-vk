@@ -131,7 +131,7 @@ impl GltfReader {
                         60.0f32.to_radians(),
                         (1000.0, 1000.0),
                         dir.xyz(),
-                        light.intensity(),
+                        light.intensity() / (4.0 * std::f32::consts::PI),
                     );
                     let light = self.light_manager.borrow_mut().add_light(light, ctx, self.texture_manager.clone());
                     Model::new(Vec::new(), node_transform, Some(light), None, node.name().map(|x| x.to_string()))

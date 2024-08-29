@@ -269,7 +269,7 @@ impl App {
             camera,
             settings: AppSettings {
                 show_gui: true,
-                show_grid: true,
+                show_grid: false,
                 view_as_light: false,
             },
             gui: Gui::new(cmd_sender.clone()),
@@ -794,6 +794,7 @@ impl App {
                         self.texture_manager.borrow().descriptor_set(),
                         self.scene_data.buffer.device_address(&self.device),
                         &self.light_manager.borrow(),
+                        light.id,
                     )
                 }
             }
@@ -1094,7 +1095,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.material_manager.clone(),
         app.light_manager.clone(),
     );
-    gltf_loader.load(Path::new("assets/tex_cube.glb"), ctx);
+    gltf_loader.load(Path::new("assets/shadow_test.glb"), ctx);
 
     // todo restrict to "watch" feature
     let (watch_tx, watch_rx) = std::sync::mpsc::channel();

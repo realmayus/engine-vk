@@ -6,7 +6,7 @@
 
 layout (location = 0) in vec3 worldPos;
 layout (location = 1) in vec2 texCoords;
-layout (location = 2) in vec3 normal;
+layout (location = 2) in vec3 inNormal;
 layout (location = 0) out vec4 outFragColor;
 
 layout( push_constant ) uniform constants {
@@ -78,7 +78,7 @@ vec3 evaluatePunctualLight(Light light, float roughness, vec3 f0, vec3 n, vec3 d
     attenuation  = getSquareFalloffAttenuation(posToLight, invRadius);
     attenuation *= getSpotAngleAttenuation(l, light.direction.xyz, light.inner_angle, light.outer_angle);
 
-    vec3 luminance = (BSDF(light, roughness, f0, n, diffuseColor, l) * light.intensity * attenuation * NoL) * vec3(1.0, 1.0, 1.0); // = * light color
+    vec3 luminance = (BSDF(light, roughness, f0, n, diffuseColor, l) * light.intensity * attenuation * NoL) * light.color.rgb; // = * light color
     return luminance;
 }
 
@@ -113,6 +113,7 @@ void main() {
     vec3 baseColor = mat.albedo.rgb * texture(tex[mat.albedo_tex], texCoords).rgb;
     vec3 diffuseColor = (1.0 - metallic) * baseColor.rgb;
     vec3 acc = vec3(0.0);
+    vec3 normal = inNormal;
 
     vec3 f0 = 0.16 * reflectance * reflectance * (1.0 - metallic) + baseColor * metallic;
 
